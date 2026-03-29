@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
@@ -31,8 +29,10 @@ class OrderRequest(BaseModel):
     @field_validator("quantity", "limit_price", mode="before")
     @classmethod
     def reject_float(cls, v: object) -> object:
+        if v is None:
+            return v  # None is valid for Optional[Decimal] fields
         if isinstance(v, float):
-            raise ValueError("float is not allowed for quantity/price fields; use Decimal")
+            raise ValueError("use Decimal, not float, for monetary values")
         return v
 
     @field_validator("quantity", mode="after")
@@ -78,7 +78,7 @@ class Fill(BaseModel):
     @classmethod
     def must_be_positive(cls, v: Decimal) -> Decimal:
         if v <= 0:
-            raise ValueError("value must be > 0")
+            raise ValueError("filled_quantity and fill_price must be > 0")
         return v
 
     @field_validator("commission", mode="after")

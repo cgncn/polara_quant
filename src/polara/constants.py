@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -10,7 +8,12 @@ POLARA_VERSION = "0.1.0"
 
 
 def validate_utc_datetime(v: datetime) -> datetime:
-    """Confirm a datetime is timezone-aware and UTC."""
+    """
+    Validate that a datetime is timezone-aware and has a UTC (zero) offset.
+
+    Accepts any timezone with a zero UTC offset (UTC, Etc/UTC, timezone.utc,
+    timezone(timedelta(0))). Rejects naive datetimes and non-UTC offsets.
+    """
     if v.tzinfo is None:
         raise ValueError("datetime must be timezone-aware (UTC required)")
     if v.utcoffset() != timedelta(0):

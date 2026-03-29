@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 from decimal import Decimal
 
@@ -78,6 +76,7 @@ class Quote(BaseModel):
     @field_validator("ask", mode="after")
     @classmethod
     def ask_must_be_gte_bid(cls, v: Decimal, info: object) -> Decimal:
+        # info.data contains already-validated fields
         data = getattr(info, "data", {})
         bid = data.get("bid")
         if bid is not None and v < bid:

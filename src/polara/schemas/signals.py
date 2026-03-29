@@ -1,16 +1,13 @@
-from __future__ import annotations
-
 from datetime import datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from polara.constants import validate_utc_datetime
+from polara.constants import ZERO, validate_utc_datetime
 
 _MINUS_ONE = Decimal("-1")
 _ONE = Decimal("1")
-_ZERO = Decimal("0")
 
 
 class Signal(BaseModel):
@@ -45,6 +42,7 @@ class Signal(BaseModel):
 class TargetPosition(BaseModel):
     model_config = ConfigDict(strict=True)
 
+    position_id: UUID = Field(default_factory=uuid4)
     strategy_id: str
     symbol: str
     target_weight: Decimal
@@ -66,7 +64,7 @@ class TargetPosition(BaseModel):
     @field_validator("target_weight", mode="after")
     @classmethod
     def target_weight_in_range(cls, v: Decimal) -> Decimal:
-        if v < _ZERO or v > _ONE:
+        if v < ZERO or v > _ONE:
             raise ValueError(f"target_weight must be in range [0, 1], got {v}")
         return v
 
