@@ -28,6 +28,13 @@ class AccountInfo(BaseModel):
     def timestamp_must_be_utc(cls, v: datetime) -> datetime:
         return validate_utc_datetime(v)
 
+    @field_validator("net_liquidation", "cash", "unrealised_pnl", "realised_pnl", mode="before")
+    @classmethod
+    def reject_float(cls, v: object) -> object:
+        if isinstance(v, float):
+            raise ValueError("use Decimal, not float, for monetary values")
+        return v
+
 
 class Position(BaseModel):
     model_config = ConfigDict(strict=True)
@@ -43,6 +50,13 @@ class Position(BaseModel):
     def updated_at_must_be_utc(cls, v: datetime) -> datetime:
         return validate_utc_datetime(v)
 
+    @field_validator("quantity", "avg_cost", "unrealised_pnl", mode="before")
+    @classmethod
+    def reject_float(cls, v: object) -> object:
+        if isinstance(v, float):
+            raise ValueError("use Decimal, not float, for monetary values")
+        return v
+
 
 class PnLSnapshot(BaseModel):
     model_config = ConfigDict(strict=True)
@@ -57,6 +71,13 @@ class PnLSnapshot(BaseModel):
     @classmethod
     def snapshot_at_must_be_utc(cls, v: datetime) -> datetime:
         return validate_utc_datetime(v)
+
+    @field_validator("net_liquidation", "cash", "unrealised_pnl", "realised_pnl", mode="before")
+    @classmethod
+    def reject_float(cls, v: object) -> object:
+        if isinstance(v, float):
+            raise ValueError("use Decimal, not float, for monetary values")
+        return v
 
 
 class BrokerStatus(BaseModel):
@@ -96,27 +117,10 @@ class OrderStatus(BaseModel):
         return validate_utc_datetime(v)
 
 
-class OrderWithFills(BaseModel):
+class OrderWithFills(OrderStatus):
     model_config = ConfigDict(strict=True)
 
-    order_id: UUID
-    ib_order_id: int | None
-    status: OrderStatusLiteral
-    submitted_at: datetime
-    filled_at: datetime | None
     fills: list[Fill]
-
-    @field_validator("submitted_at", mode="after")
-    @classmethod
-    def submitted_at_must_be_utc(cls, v: datetime) -> datetime:
-        return validate_utc_datetime(v)
-
-    @field_validator("filled_at", mode="after")
-    @classmethod
-    def filled_at_must_be_utc(cls, v: datetime | None) -> datetime | None:
-        if v is None:
-            return v
-        return validate_utc_datetime(v)
 
 
 __all__ = [

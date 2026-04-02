@@ -83,6 +83,18 @@ def test_position_rejects_float_quantity():
         )
 
 
+def test_position_rejects_naive_datetime():
+    from datetime import datetime
+    with pytest.raises(ValidationError):
+        Position(
+            symbol="AAPL",
+            quantity=Decimal("10"),
+            avg_cost=Decimal("150.00"),
+            unrealised_pnl=Decimal("0"),
+            updated_at=datetime(2026, 1, 1),  # naive — must be rejected
+        )
+
+
 # ── PnLSnapshot ────────────────────────────────────────────────────────────────
 
 def test_pnl_snapshot_valid():
@@ -96,6 +108,18 @@ def test_pnl_snapshot_valid():
     assert s.snapshot_at.tzinfo is not None
 
 
+def test_pnl_snapshot_rejects_naive_datetime():
+    from datetime import datetime
+    with pytest.raises(ValidationError):
+        PnLSnapshot(
+            net_liquidation=Decimal("100000"),
+            cash=Decimal("50000"),
+            unrealised_pnl=Decimal("500"),
+            realised_pnl=Decimal("200"),
+            snapshot_at=datetime(2026, 1, 1),  # naive — must be rejected
+        )
+
+
 # ── BrokerStatus ───────────────────────────────────────────────────────────────
 
 def test_broker_status_connected():
@@ -106,6 +130,16 @@ def test_broker_status_connected():
 def test_broker_status_disconnected():
     s = BrokerStatus(connected=False, ib_server_time=None, account_id=None)
     assert s.ib_server_time is None
+
+
+def test_broker_status_rejects_naive_datetime():
+    from datetime import datetime
+    with pytest.raises(ValidationError):
+        BrokerStatus(
+            connected=True,
+            ib_server_time=datetime(2026, 1, 1),  # naive — must be rejected
+            account_id="DU123456",
+        )
 
 
 # ── OrderStatus ────────────────────────────────────────────────────────────────
@@ -128,6 +162,18 @@ def test_order_status_rejects_invalid_status():
             ib_order_id=None,
             status="flying",  # not a valid status
             submitted_at=utcnow(),
+            filled_at=None,
+        )
+
+
+def test_order_status_rejects_naive_datetime():
+    from datetime import datetime
+    with pytest.raises(ValidationError):
+        OrderStatus(
+            order_id=uuid4(),
+            ib_order_id=None,
+            status="submitted",
+            submitted_at=datetime(2026, 1, 1),  # naive — must be rejected
             filled_at=None,
         )
 
