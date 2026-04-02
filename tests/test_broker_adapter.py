@@ -200,3 +200,33 @@ async def test_pnl_snapshot_loop_saves_to_db():
             await adapter.pnl_snapshot_loop()
 
     assert mock_db.commit.called
+
+
+# ── cancel_order ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cancel_order_not_found_raises():
+    client = make_mock_ib_client(connected=True)
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = None
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
+    with pytest.raises(ValueError, match="not found"):
+        await adapter.cancel_order("nonexistent-id", db=mock_db)
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_terminal_status_raises():
+    client = make_mock_ib_client(connected=True)
+    mock_db = AsyncMock()
+    mock_row = MagicMock()
+    mock_row.status = "filled"
+    mock_row.ib_order_id = 42
+    mock_row.submitted_at = datetime.now(UTC).isoformat()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = mock_row
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
+    with pytest.raises(ValueError, match="Cannot cancel"):
+        await adapter.cancel_order("some-id", db=mock_db)

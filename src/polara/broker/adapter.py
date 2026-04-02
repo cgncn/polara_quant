@@ -60,6 +60,7 @@ class BrokerAdapter:
     ) -> None:
         self._client = ib_client
         self._db_factory = db_session_factory
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     # ── connection status ──────────────────────────────────────────────────────
 
@@ -322,20 +323,51 @@ class BrokerAdapter:
     # ── IB callbacks ───────────────────────────────────────────────────────────
 
     def _register_callbacks(self) -> None:
-        """Attach ib_async event handlers for fills and order status changes."""
+        """Attach ib_async event handlers for fills and order status changes.
+
+        Must be called once after the IBClient is connected (i.e., from FastAPI lifespan).
+        Calling before connection is established has no effect since callbacks only fire
+        while the IB session is active.
+        """
         self._client.ib.execDetailsEvent += self._on_exec_details
         self._client.ib.orderStatusEvent += self._on_order_status
 
     def _on_exec_details(self, trade: Any, fill: Any) -> None:
         """Fired when a fill execution arrives."""
-        asyncio.create_task(self._save_fill(fill))
+        task = asyncio.create_task(self._save_fill(fill))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _save_fill(self, fill: Any) -> None:
         """Persist a fill from IB to the fills table."""
         try:
             exec_ = fill.execution
             comm = fill.commissionReport
+
             async with self._db_factory() as db:
+                # Look up the application-layer order_id UUID from the ib_order_id integer
+                order_row = (
+                    await db.execute(
+                        text("SELECT order_id FROM orders WHERE ib_order_id = :ib_oid"),
+                        {"ib_oid": exec_.orderId},
+                    )
+                ).fetchone()
+
+                if order_row is None:
+                    logger.error(
+                        "Cannot save fill: no order found for ib_order_id=%s (execId=%s)",
+                        exec_.orderId,
+                        exec_.execId,
+                    )
+                    return
+
+                # Parse fill timestamp from IB execution object
+                filled_at: str
+                if hasattr(exec_, "time") and exec_.time:
+                    filled_at = _parse_dt(str(exec_.time)).isoformat()
+                else:
+                    filled_at = datetime.now(UTC).isoformat()
+
                 await db.execute(
                     text("""
                         INSERT INTO fills
@@ -349,13 +381,13 @@ class BrokerAdapter:
                     {
                         "id": str(uuid.uuid4()),
                         "fill_id": exec_.execId,
-                        "order_id": str(exec_.orderId),
+                        "order_id": order_row.order_id,
                         "symbol": fill.contract.symbol,
                         "side": "buy" if exec_.side == "BOT" else "sell",
                         "filled_quantity": str(Decimal(str(exec_.shares))),
                         "fill_price": str(Decimal(str(exec_.price))),
                         "commission": str(Decimal(str(comm.commission))) if comm else "0",
-                        "filled_at": datetime.now(UTC).isoformat(),
+                        "filled_at": filled_at,
                     },
                 )
                 await db.execute(
@@ -368,11 +400,13 @@ class BrokerAdapter:
                 await db.commit()
             logger.info("Fill saved: execId=%s", exec_.execId)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to save fill: %s", exc)
+            logger.error("Failed to save fill: %s", exc)
 
     def _on_order_status(self, trade: Any) -> None:
         """Fired when order status changes."""
-        asyncio.create_task(self._update_order_status(trade))
+        task = asyncio.create_task(self._update_order_status(trade))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _update_order_status(self, trade: Any) -> None:
         """Persist IB order status change to DB."""
