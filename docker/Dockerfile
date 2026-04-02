@@ -21,8 +21,9 @@ COPY alembic.ini ./
 RUN mkdir -p data
 
 # Run as non-root user
-RUN addgroup --system polara && adduser --system --ingroup polara polara
+RUN addgroup --system polara && adduser --system --ingroup polara --home /app polara
 RUN chown -R polara:polara /app
+ENV HOME=/app
 USER polara
 
 COPY --chmod=755 docker/entrypoint.sh ./entrypoint.sh
