@@ -1,8 +1,11 @@
+import logging
 import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "sqlite+aiosqlite:///./data/polara.db"
@@ -27,5 +30,6 @@ async def ping_db() -> bool:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as exc:
+        logger.debug("ping_db failed: %s", exc, exc_info=True)
         return False

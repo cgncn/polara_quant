@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from polara.db.connection import ping_db
 
@@ -10,13 +10,19 @@ router = APIRouter()
 
 
 class HealthResponse(BaseModel):
+    model_config = ConfigDict(strict=True)
+
     status: str  # "ok" or "degraded"
     db: str  # "ok" or "error"
     version: str
     timestamp: str  # UTC ISO 8601
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    responses={503: {"model": HealthResponse}},
+)
 async def health_check() -> JSONResponse:
     db_ok = await ping_db()
     body = HealthResponse(

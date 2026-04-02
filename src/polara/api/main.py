@@ -15,6 +15,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     masked = _mask_db_url(DATABASE_URL)
     logger.info("Polara Quant %s starting — DB: %s", _get_version(), masked)
     yield
+    logger.info("Polara Quant %s stopped", _get_version())
 
 
 def create_app() -> FastAPI:

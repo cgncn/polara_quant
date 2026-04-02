@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from polara.api.main import _mask_db_url, create_app
@@ -68,12 +69,12 @@ def test_mask_db_url_no_credentials_returns_unchanged() -> None:
 
 
 @pytest.fixture
-def test_app():
+def test_app() -> FastAPI:
     return create_app()
 
 
 @pytest.mark.asyncio
-async def test_health_returns_200_when_db_ok(test_app) -> None:
+async def test_health_returns_200_when_db_ok(test_app: FastAPI) -> None:
     with patch("polara.api.routes.health.ping_db", new_callable=AsyncMock) as mock_ping:
         mock_ping.return_value = True
         async with AsyncClient(
@@ -90,7 +91,7 @@ async def test_health_returns_200_when_db_ok(test_app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_returns_503_when_db_down(test_app) -> None:
+async def test_health_returns_503_when_db_down(test_app: FastAPI) -> None:
     with patch("polara.api.routes.health.ping_db", new_callable=AsyncMock) as mock_ping:
         mock_ping.return_value = False
         async with AsyncClient(
@@ -105,7 +106,7 @@ async def test_health_returns_503_when_db_down(test_app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_timestamp_is_utc_iso8601(test_app) -> None:
+async def test_health_timestamp_is_utc_iso8601(test_app: FastAPI) -> None:
     with patch("polara.api.routes.health.ping_db", new_callable=AsyncMock) as mock_ping:
         mock_ping.return_value = True
         async with AsyncClient(
