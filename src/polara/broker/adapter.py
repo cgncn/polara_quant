@@ -338,12 +338,13 @@ class BrokerAdapter:
             async with self._db_factory() as db:
                 await db.execute(
                     text("""
-                        INSERT OR IGNORE INTO fills
+                        INSERT INTO fills
                             (id, fill_id, order_id, symbol, side,
                              filled_quantity, fill_price, commission, filled_at)
                         VALUES
                             (:id, :fill_id, :order_id, :symbol, :side,
                              :filled_quantity, :fill_price, :commission, :filled_at)
+                        ON CONFLICT (fill_id) DO NOTHING
                     """),
                     {
                         "id": str(uuid.uuid4()),
