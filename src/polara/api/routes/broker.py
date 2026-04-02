@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from polara.broker.adapter import BrokerAdapter, BrokerDisconnectedError
@@ -25,6 +25,24 @@ router = APIRouter(prefix="/broker", tags=["broker"])
 def _get_adapter(request: Request) -> BrokerAdapter:
     """FastAPI dependency — retrieves the BrokerAdapter from app.state."""
     return request.app.state.broker_adapter  # type: ignore[no-any-return]
+
+
+async def _parse_order_request(request: Request) -> OrderRequest:
+    """Dependency that parses OrderRequest via model_validate_json.
+
+    FastAPI's default body binding uses model_validate (Python-mode), which
+    rejects string UUIDs and string datetimes under strict=True.  JSON-mode
+    validation (model_validate_json) applies Pydantic's lax-JSON coercions —
+    e.g. str→UUID, str→datetime, str→Decimal — so we use it explicitly here.
+    """
+    body = await request.body()
+    try:
+        return OrderRequest.model_validate_json(body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
 
 
 def _disconnected(exc: BrokerDisconnectedError) -> HTTPException:
@@ -69,39 +87,22 @@ async def get_positions(
 
 # ── POST /broker/orders ───────────────────────────────────────────────────────
 
-@router.post("/orders", status_code=status.HTTP_201_CREATED)
+@router.post("/orders", response_model=OrderStatus, status_code=status.HTTP_201_CREATED)
 async def place_order(
-    request: Request,
+    req: OrderRequest = Depends(_parse_order_request),
     adapter: BrokerAdapter = Depends(_get_adapter),
     db: AsyncSession = Depends(get_db),
-) -> JSONResponse:
-    """Accept an OrderRequest JSON body and submit it via the broker adapter.
-
-    Uses model_validate_json so that Pydantic's JSON coercion rules apply even
-    when the model is configured with strict=True (e.g. str -> Decimal).
-    """
-    body = await request.body()
-    try:
-        req = OrderRequest.model_validate_json(body)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+) -> OrderStatus:
     try:
         await adapter.place_order(req, db=db)
     except BrokerDisconnectedError as exc:
         raise _disconnected(exc) from exc
-    result = OrderStatus(
+    return OrderStatus(
         order_id=req.order_id,
         ib_order_id=None,
         status="submitted",
         submitted_at=datetime.now(UTC),
         filled_at=None,
-    )
-    return JSONResponse(
-        content=result.model_dump(mode="json"),
-        status_code=status.HTTP_201_CREATED,
     )
 
 
