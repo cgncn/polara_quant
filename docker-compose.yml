@@ -1,4 +1,18 @@
 services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:latest
+    restart: unless-stopped
+    environment:
+      - TWS_USERID=${IB_USERNAME}
+      - TWS_PASSWORD=${IB_PASSWORD}
+      - TRADING_MODE=paper
+      - TWS_SETTINGS_PATH=/home/ibgateway/Jts
+      - TWOFA_TIMEOUT_ACTION=restart
+    ports:
+      - "4003:4003"
+    volumes:
+      - ./data/jts:/home/ibgateway/Jts
+
   polara-api:
     build:
       context: .
@@ -9,10 +23,15 @@ services:
       - ./data:/app/data
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/polara.db
+      - IB_HOST=ib-gateway
+      - IB_PORT=4003
+      - IB_CLIENT_ID=1
+    depends_on:
+      - ib-gateway
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
