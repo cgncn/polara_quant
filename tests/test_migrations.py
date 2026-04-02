@@ -12,10 +12,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 def _alembic_cfg(db_path: str) -> Config:
     """Return an Alembic Config pointing at a temp DB."""
+    url = f"sqlite+aiosqlite:///{db_path}"
     cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
-    # Override env.py DATABASE_URL lookup
-    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    cfg.set_main_option("sqlalchemy.url", url)
+    cfg.set_main_option("DATABASE_URL", url)
+    # Override via os.environ so env.py picks it up — caller must restore
+    os.environ["DATABASE_URL"] = url
     return cfg
 
 
@@ -30,6 +32,7 @@ async def _get_tables(db_url: str) -> list[str]:
 
 
 def test_upgrade_creates_expected_tables() -> None:
+    original = os.environ.get("DATABASE_URL")
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -42,9 +45,14 @@ def test_upgrade_creates_expected_tables() -> None:
         assert "alembic_version" in tables
     finally:
         os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
 
 
 def test_upgrade_is_idempotent() -> None:
+    original = os.environ.get("DATABASE_URL")
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -54,9 +62,14 @@ def test_upgrade_is_idempotent() -> None:
         command.upgrade(cfg, "head")
     finally:
         os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
 
 
 def test_downgrade_removes_tables() -> None:
+    original = os.environ.get("DATABASE_URL")
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -69,3 +82,7 @@ def test_downgrade_removes_tables() -> None:
         assert "jobs" not in tables
     finally:
         os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original

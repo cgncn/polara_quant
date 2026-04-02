@@ -1,6 +1,7 @@
 import logging
 import os
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -16,10 +17,11 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 @event.listens_for(engine.sync_engine, "connect")
-def _enable_foreign_keys(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+def _enable_foreign_keys(dbapi_connection: Any, connection_record: Any) -> None:
+    if "sqlite" in DATABASE_URL:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

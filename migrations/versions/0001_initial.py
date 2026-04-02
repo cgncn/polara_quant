@@ -44,7 +44,7 @@ def upgrade() -> None:
             id TEXT PRIMARY KEY,
             job_type TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed')),
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             started_at TEXT,
             finished_at TEXT,
             error_message TEXT
