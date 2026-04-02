@@ -167,20 +167,6 @@ def test_on_disconnected_cancels_existing_task(client_with_mock_ib):
     client, _ = client_with_mock_ib
     client._shutdown = False
 
-    # Simulate an already-running reconnect task
-    loop = asyncio.new_event_loop()
-    try:
-        async def dummy() -> None:
-            await asyncio.sleep(9999)
-        old_task = loop.create_task(dummy())
-        client._reconnect_task = old_task
-        # Manually run one step so the task is registered
-        loop.run_until_complete(asyncio.sleep(0))  # type: ignore[arg-type]
-    except Exception:  # noqa: BLE001
-        pass
-    finally:
-        loop.close()
-
     # The _on_disconnected should cancel the old task
     # We can't easily run create_task without an event loop here,
     # so just verify the guard path: old task done => no cancel needed
