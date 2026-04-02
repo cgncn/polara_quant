@@ -1,0 +1,411 @@
+"""BrokerAdapter — business logic layer for IB Gateway communication.
+
+All ib_async interactions happen here. Nothing else in polara/ imports ib_async.
+Float values from ib_async are converted to Decimal immediately upon receipt.
+"""
+import asyncio
+import logging
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from polara.broker.client import IBClient
+from polara.broker.schemas import (
+    AccountInfo,
+    BrokerStatus,
+    OrderStatus,
+    OrderWithFills,
+    PnLSnapshot,
+    Position,
+)
+from polara.schemas.orders import Fill, OrderRequest
+
+logger = logging.getLogger(__name__)
+
+_PNL_SNAPSHOT_INTERVAL_SECONDS = 60
+
+_INSERT_ORDER = text("""
+    INSERT INTO orders
+        (id, order_id, symbol, side, quantity, limit_price, status,
+         ib_order_id, strategy_id, submitted_at)
+    VALUES
+        (:id, :order_id, :symbol, :side, :quantity, :limit_price, :status,
+         :ib_order_id, :strategy_id, :submitted_at)
+""")
+
+_INSERT_PNL_SNAPSHOT = text("""
+    INSERT INTO account_snapshots
+        (id, net_liquidation, cash, unrealised_pnl, realised_pnl, snapshot_at)
+    VALUES
+        (:id, :net_liquidation, :cash, :unrealised_pnl, :realised_pnl, :snapshot_at)
+""")
+
+
+class BrokerDisconnectedError(RuntimeError):
+    """Raised when an operation requires IB Gateway but it is not connected."""
+
+
+class BrokerAdapter:
+    """Business logic layer. Depends on IBClient; stores state in the DB."""
+
+    def __init__(
+        self,
+        ib_client: IBClient,
+        db_session_factory: Callable[[], Any],
+    ) -> None:
+        self._client = ib_client
+        self._db_factory = db_session_factory
+
+    # ── connection status ──────────────────────────────────────────────────────
+
+    async def get_broker_status(self) -> BrokerStatus:
+        if not self._client.connected:
+            return BrokerStatus(connected=False, ib_server_time=None, account_id=None)
+        try:
+            epoch = await self._client.ib.reqCurrentTimeAsync()
+            server_time = datetime.fromtimestamp(epoch, tz=UTC)
+        except Exception:  # noqa: BLE001
+            server_time = None
+        return BrokerStatus(
+            connected=True,
+            ib_server_time=server_time,
+            account_id=None,
+        )
+
+    # ── account ────────────────────────────────────────────────────────────────
+
+    async def get_account(self) -> AccountInfo:
+        self._require_connected()
+        summary = await self._client.ib.reqAccountSummaryAsync()
+        values: dict[str, str] = {}
+        currency = "USD"
+        for av in summary:
+            values[av.tag] = av.value
+            if av.tag == "NetLiquidation":
+                currency = av.currency
+        return AccountInfo(
+            net_liquidation=Decimal(values.get("NetLiquidation", "0")),
+            cash=Decimal(values.get("TotalCashValue", "0")),
+            unrealised_pnl=Decimal(values.get("UnrealizedPnL", "0")),
+            realised_pnl=Decimal(values.get("RealizedPnL", "0")),
+            currency=currency,
+            timestamp=datetime.now(UTC),
+        )
+
+    # ── positions ──────────────────────────────────────────────────────────────
+
+    async def get_positions(self) -> list[Position]:
+        self._require_connected()
+        ib_positions = self._client.ib.positions()
+        result: list[Position] = []
+        for p in ib_positions:
+            qty = Decimal(str(p.position))
+            avg = Decimal(str(p.avgCost))
+            unrealised = Decimal(str(p.unrealPnl))
+            result.append(
+                Position(
+                    symbol=p.contract.symbol,
+                    quantity=qty,
+                    avg_cost=avg,
+                    unrealised_pnl=unrealised,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+        return result
+
+    # ── orders ─────────────────────────────────────────────────────────────────
+
+    async def place_order(self, req: OrderRequest, db: AsyncSession) -> str:
+        """Submit order to IB and persist to DB. Returns order_id as string."""
+        self._require_connected()
+        from ib_async import LimitOrder, MarketOrder, Stock  # noqa: PLC0415
+
+        contract = Stock(req.symbol, "SMART", "USD")
+        action = req.side.upper()
+        if req.limit_price is not None:
+            order = LimitOrder(action, float(req.quantity), float(req.limit_price))
+        else:
+            order = MarketOrder(action, float(req.quantity))
+
+        trade = self._client.ib.placeOrder(contract, order)
+        ib_order_id: int | None = trade.order.orderId if trade else None
+
+        now = datetime.now(UTC)
+        await db.execute(
+            _INSERT_ORDER,
+            {
+                "id": str(uuid.uuid4()),
+                "order_id": str(req.order_id),
+                "symbol": req.symbol,
+                "side": req.side,
+                "quantity": str(req.quantity),
+                "limit_price": str(req.limit_price) if req.limit_price else None,
+                "status": "submitted",
+                "ib_order_id": ib_order_id,
+                "strategy_id": req.strategy_id,
+                "submitted_at": now.isoformat(),
+            },
+        )
+        await db.commit()
+        logger.info("Order %s submitted (ib_order_id=%s)", req.order_id, ib_order_id)
+        return str(req.order_id)
+
+    async def cancel_order(self, order_id: str, db: AsyncSession) -> OrderStatus:
+        """Cancel an open order by our order_id."""
+        self._require_connected()
+
+        row = (
+            await db.execute(
+                text("SELECT ib_order_id, status, submitted_at FROM orders WHERE order_id = :oid"),
+                {"oid": order_id},
+            )
+        ).fetchone()
+
+        if row is None:
+            raise ValueError(f"Order {order_id} not found")
+        if row.status in ("filled", "cancelled", "error"):
+            raise ValueError(f"Cannot cancel order in status '{row.status}'")
+
+        if row.ib_order_id is not None:
+            from ib_async import Order as IBOrder  # noqa: PLC0415
+            cancel_order = IBOrder()
+            cancel_order.orderId = row.ib_order_id
+            self._client.ib.cancelOrder(cancel_order)
+
+        await db.execute(
+            text("UPDATE orders SET status = 'cancelled' WHERE order_id = :oid"),
+            {"oid": order_id},
+        )
+        await db.commit()
+
+        return OrderStatus(
+            order_id=uuid.UUID(order_id),
+            ib_order_id=row.ib_order_id,
+            status="cancelled",
+            submitted_at=_parse_dt(row.submitted_at),
+            filled_at=None,
+        )
+
+    async def list_orders(self, db: AsyncSession) -> list[OrderStatus]:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT order_id, ib_order_id, status, submitted_at, filled_at "
+                    "FROM orders ORDER BY submitted_at DESC"
+                )
+            )
+        ).fetchall()
+        return [
+            OrderStatus(
+                order_id=uuid.UUID(row.order_id),
+                ib_order_id=row.ib_order_id,
+                status=row.status,
+                submitted_at=_parse_dt(row.submitted_at),
+                filled_at=_parse_dt(row.filled_at) if row.filled_at else None,
+            )
+            for row in rows
+        ]
+
+    async def get_order_with_fills(
+        self, order_id: str, db: AsyncSession
+    ) -> OrderWithFills | None:
+        order_row = (
+            await db.execute(
+                text(
+                    "SELECT order_id, ib_order_id, status, submitted_at, filled_at "
+                    "FROM orders WHERE order_id = :oid"
+                ),
+                {"oid": order_id},
+            )
+        ).fetchone()
+        if order_row is None:
+            return None
+
+        fill_rows = (
+            await db.execute(
+                text(
+                    "SELECT fill_id, order_id, symbol, side, filled_quantity, "
+                    "fill_price, commission, filled_at FROM fills WHERE order_id = :oid"
+                ),
+                {"oid": order_id},
+            )
+        ).fetchall()
+
+        fills = [
+            Fill(
+                fill_id=uuid.UUID(r.fill_id),
+                order_id=uuid.UUID(r.order_id),
+                symbol=r.symbol,
+                side=r.side,
+                filled_quantity=Decimal(r.filled_quantity),
+                fill_price=Decimal(r.fill_price),
+                commission=Decimal(r.commission),
+                filled_at=_parse_dt(r.filled_at),
+            )
+            for r in fill_rows
+        ]
+
+        return OrderWithFills(
+            order_id=uuid.UUID(order_row.order_id),
+            ib_order_id=order_row.ib_order_id,
+            status=order_row.status,
+            submitted_at=_parse_dt(order_row.submitted_at),
+            filled_at=_parse_dt(order_row.filled_at) if order_row.filled_at else None,
+            fills=fills,
+        )
+
+    # ── P&L ────────────────────────────────────────────────────────────────────
+
+    async def get_pnl_snapshot(self) -> PnLSnapshot:
+        self._require_connected()
+        summary = await self._client.ib.reqAccountSummaryAsync()
+        values: dict[str, str] = {}
+        for av in summary:
+            values[av.tag] = av.value
+        return PnLSnapshot(
+            net_liquidation=Decimal(values.get("NetLiquidation", "0")),
+            cash=Decimal(values.get("TotalCashValue", "0")),
+            unrealised_pnl=Decimal(values.get("UnrealizedPnL", "0")),
+            realised_pnl=Decimal(values.get("RealizedPnL", "0")),
+            snapshot_at=datetime.now(UTC),
+        )
+
+    async def pnl_snapshot_loop(self) -> None:
+        """Background task: snapshot P&L to DB every 60 seconds."""
+        while True:
+            if self._client.connected:
+                try:
+                    snapshot = await self.get_pnl_snapshot()
+                    async with self._db_factory() as db:
+                        await db.execute(
+                            _INSERT_PNL_SNAPSHOT,
+                            {
+                                "id": str(uuid.uuid4()),
+                                "net_liquidation": str(snapshot.net_liquidation),
+                                "cash": str(snapshot.cash),
+                                "unrealised_pnl": str(snapshot.unrealised_pnl),
+                                "realised_pnl": str(snapshot.realised_pnl),
+                                "snapshot_at": snapshot.snapshot_at.isoformat(),
+                            },
+                        )
+                        await db.commit()
+                    logger.debug("P&L snapshot saved at %s", snapshot.snapshot_at)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("P&L snapshot failed: %s", exc)
+            await asyncio.sleep(_PNL_SNAPSHOT_INTERVAL_SECONDS)
+
+    async def list_pnl_history(self, db: AsyncSession) -> list[PnLSnapshot]:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT net_liquidation, cash, unrealised_pnl, realised_pnl, snapshot_at "
+                    "FROM account_snapshots ORDER BY snapshot_at DESC"
+                )
+            )
+        ).fetchall()
+        return [
+            PnLSnapshot(
+                net_liquidation=Decimal(r.net_liquidation),
+                cash=Decimal(r.cash),
+                unrealised_pnl=Decimal(r.unrealised_pnl),
+                realised_pnl=Decimal(r.realised_pnl),
+                snapshot_at=_parse_dt(r.snapshot_at),
+            )
+            for r in rows
+        ]
+
+    # ── IB callbacks ───────────────────────────────────────────────────────────
+
+    def _register_callbacks(self) -> None:
+        """Attach ib_async event handlers for fills and order status changes."""
+        self._client.ib.execDetailsEvent += self._on_exec_details
+        self._client.ib.orderStatusEvent += self._on_order_status
+
+    def _on_exec_details(self, trade: Any, fill: Any) -> None:
+        """Fired when a fill execution arrives."""
+        asyncio.create_task(self._save_fill(fill))
+
+    async def _save_fill(self, fill: Any) -> None:
+        """Persist a fill from IB to the fills table."""
+        try:
+            exec_ = fill.execution
+            comm = fill.commissionReport
+            async with self._db_factory() as db:
+                await db.execute(
+                    text("""
+                        INSERT OR IGNORE INTO fills
+                            (id, fill_id, order_id, symbol, side,
+                             filled_quantity, fill_price, commission, filled_at)
+                        VALUES
+                            (:id, :fill_id, :order_id, :symbol, :side,
+                             :filled_quantity, :fill_price, :commission, :filled_at)
+                    """),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "fill_id": exec_.execId,
+                        "order_id": str(exec_.orderId),
+                        "symbol": fill.contract.symbol,
+                        "side": "buy" if exec_.side == "BOT" else "sell",
+                        "filled_quantity": str(Decimal(str(exec_.shares))),
+                        "fill_price": str(Decimal(str(exec_.price))),
+                        "commission": str(Decimal(str(comm.commission))) if comm else "0",
+                        "filled_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                await db.execute(
+                    text(
+                        "UPDATE orders SET status = 'filled', filled_at = :now "
+                        "WHERE ib_order_id = :ib_oid"
+                    ),
+                    {"now": datetime.now(UTC).isoformat(), "ib_oid": exec_.orderId},
+                )
+                await db.commit()
+            logger.info("Fill saved: execId=%s", exec_.execId)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to save fill: %s", exc)
+
+    def _on_order_status(self, trade: Any) -> None:
+        """Fired when order status changes."""
+        asyncio.create_task(self._update_order_status(trade))
+
+    async def _update_order_status(self, trade: Any) -> None:
+        """Persist IB order status change to DB."""
+        try:
+            ib_status = trade.orderStatus.status
+            status_map = {
+                "Submitted": "submitted",
+                "PreSubmitted": "submitted",
+                "Filled": "filled",
+                "Cancelled": "cancelled",
+                "Inactive": "error",
+            }
+            our_status = status_map.get(ib_status)
+            if our_status is None:
+                return
+            async with self._db_factory() as db:
+                await db.execute(
+                    text("UPDATE orders SET status = :status WHERE ib_order_id = :ib_oid"),
+                    {"status": our_status, "ib_oid": trade.order.orderId},
+                )
+                await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to update order status: %s", exc)
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _require_connected(self) -> None:
+        if not self._client.connected:
+            raise BrokerDisconnectedError("IB Gateway is not connected")
+
+
+def _parse_dt(value: str) -> datetime:
+    """Parse an ISO 8601 UTC string from DB into a UTC-aware datetime."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
