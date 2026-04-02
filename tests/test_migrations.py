@@ -86,3 +86,48 @@ def test_downgrade_removes_tables() -> None:
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = original
+
+
+def test_upgrade_creates_broker_tables() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "orders" in tables
+        assert "fills" in tables
+        assert "positions" in tables
+        assert "account_snapshots" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_downgrade_0001_removes_broker_tables() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0001")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "orders" not in tables
+        assert "fills" not in tables
+        assert "positions" not in tables
+        assert "account_snapshots" not in tables
+        # Phase-1 tables must still be present
+        assert "strategies" in tables
+        assert "strategy_versions" in tables
+        assert "jobs" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
