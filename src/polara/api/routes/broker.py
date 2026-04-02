@@ -3,7 +3,6 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from polara.broker.adapter import BrokerAdapter, BrokerDisconnectedError
@@ -25,24 +24,6 @@ router = APIRouter(prefix="/broker", tags=["broker"])
 def _get_adapter(request: Request) -> BrokerAdapter:
     """FastAPI dependency — retrieves the BrokerAdapter from app.state."""
     return request.app.state.broker_adapter  # type: ignore[no-any-return]
-
-
-async def _parse_order_request(request: Request) -> OrderRequest:
-    """Dependency that parses OrderRequest via model_validate_json.
-
-    FastAPI's default body binding uses model_validate (Python-mode), which
-    rejects string UUIDs and string datetimes under strict=True.  JSON-mode
-    validation (model_validate_json) applies Pydantic's lax-JSON coercions —
-    e.g. str→UUID, str→datetime, str→Decimal — so we use it explicitly here.
-    """
-    body = await request.body()
-    try:
-        return OrderRequest.model_validate_json(body)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
-        ) from exc
 
 
 def _disconnected(exc: BrokerDisconnectedError) -> HTTPException:
@@ -89,7 +70,7 @@ async def get_positions(
 
 @router.post("/orders", response_model=OrderStatus, status_code=status.HTTP_201_CREATED)
 async def place_order(
-    req: OrderRequest = Depends(_parse_order_request),
+    req: OrderRequest,
     adapter: BrokerAdapter = Depends(_get_adapter),
     db: AsyncSession = Depends(get_db),
 ) -> OrderStatus:

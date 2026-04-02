@@ -1,9 +1,9 @@
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from polara.constants import validate_utc_datetime
 
@@ -20,6 +20,43 @@ class OrderRequest(BaseModel):
     limit_price: Decimal | None
     requested_at: datetime
     strategy_id: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_json_types(cls, data: object) -> object:
+        """Pre-process JSON dict input before strict field validation.
+
+        FastAPI's default body binding calls model_validate (Python mode).
+        Under strict=True, strings are rejected for UUID, datetime, and Decimal
+        fields.  This validator normalises those types from their JSON string
+        representations so the route can be declared as a direct annotated
+        parameter (enabling OpenAPI requestBody generation) while still
+        enforcing strict type checking after coercion.
+        """
+        if not isinstance(data, dict):
+            return data
+        result = dict(data)
+        # str → UUID
+        if isinstance(result.get("order_id"), str):
+            try:
+                result["order_id"] = UUID(result["order_id"])
+            except ValueError:
+                pass  # let field validation produce the proper error
+        # str → datetime
+        if isinstance(result.get("requested_at"), str):
+            try:
+                result["requested_at"] = datetime.fromisoformat(result["requested_at"])
+            except ValueError:
+                pass
+        # str → Decimal for numeric fields (floats still rejected by field validators)
+        for field in ("quantity", "limit_price"):
+            val = result.get(field)
+            if isinstance(val, str):
+                try:
+                    result[field] = Decimal(val)
+                except InvalidOperation:
+                    pass
+        return result
 
     @field_validator("requested_at", mode="after")
     @classmethod
