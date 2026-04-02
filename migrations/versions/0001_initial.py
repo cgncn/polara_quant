@@ -19,7 +19,7 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS strategies (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'inactive',
+            status TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('inactive', 'paper', 'paused')),
             created_at TEXT NOT NULL
         )
     """)
@@ -36,10 +36,15 @@ def upgrade() -> None:
         )
     """)
     op.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_sv_strategy_version
+            ON strategy_versions (strategy_id, version)
+    """)
+    op.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             id TEXT PRIMARY KEY,
             job_type TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed')),
+            created_at TEXT NOT NULL DEFAULT '',
             started_at TEXT,
             finished_at TEXT,
             error_message TEXT
@@ -49,6 +54,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS jobs")
+    op.execute("DROP INDEX IF EXISTS uq_sv_strategy_version")
     op.execute("DROP TABLE IF EXISTS strategy_versions")
     op.execute("DROP INDEX IF EXISTS uq_strategies_name")
     op.execute("DROP TABLE IF EXISTS strategies")
