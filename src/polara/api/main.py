@@ -28,16 +28,19 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if not hasattr(app.state, "broker_adapter"):
         ib_client = IBClient(host=IB_HOST, port=IB_PORT, client_id=IB_CLIENT_ID)
         await ib_client.connect()
-        app.state.ib_client = ib_client
+        try:
+            # Build adapter and register fill/order-status callbacks
+            adapter = BrokerAdapter(ib_client=ib_client, db_session_factory=AsyncSessionLocal)
+            adapter._register_callbacks()
+            app.state.ib_client = ib_client
+            app.state.broker_adapter = adapter
 
-        # Build adapter and register fill/order-status callbacks
-        adapter = BrokerAdapter(ib_client=ib_client, db_session_factory=AsyncSessionLocal)
-        adapter._register_callbacks()
-        app.state.broker_adapter = adapter
-
-        # Start P&L snapshot background task (every 60 seconds)
-        pnl_task = asyncio.create_task(adapter.pnl_snapshot_loop())
-        app.state.pnl_task = pnl_task
+            # Start P&L snapshot background task (every 60 seconds)
+            pnl_task = asyncio.create_task(adapter.pnl_snapshot_loop())
+            app.state.pnl_task = pnl_task
+        except Exception:
+            await ib_client.disconnect()
+            raise
 
     yield
 
