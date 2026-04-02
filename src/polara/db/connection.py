@@ -15,7 +15,7 @@ engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-@event.listens_for(engine, "connect")
+@event.listens_for(engine.sync_engine, "connect")
 def _enable_foreign_keys(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
