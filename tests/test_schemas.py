@@ -276,3 +276,118 @@ def test_event_default_published_at_is_utc() -> None:
     bar = valid_bar()
     ev = Event(event_type=EventType.MARKET_DATA, payload=bar)
     assert ev.published_at.utcoffset() == timedelta(0)
+
+
+# ── Quote — additional coverage ───────────────────────────────────────────────
+
+def test_quote_rejects_float_bid() -> None:
+    with pytest.raises(ValidationError, match="Decimal"):
+        Quote(
+            symbol="AAPL", timestamp=UTC_NOW,
+            bid=150.0,  # float
+            ask=Decimal("150.05"), bid_size=100, ask_size=200,
+        )
+
+
+def test_quote_rejects_naive_timestamp() -> None:
+    with pytest.raises(ValidationError):
+        Quote(
+            symbol="AAPL", timestamp=NAIVE_DT,
+            bid=Decimal("150.00"), ask=Decimal("150.05"),
+            bid_size=100, ask_size=200,
+        )
+
+
+# ── Fill — additional coverage ────────────────────────────────────────────────
+
+def test_fill_valid_round_trip() -> None:
+    f = Fill(
+        fill_id=uuid4(), order_id=uuid4(), symbol="AAPL", side="sell",
+        filled_quantity=Decimal("10"), fill_price=Decimal("150.00"),
+        commission=Decimal("0.50"), filled_at=UTC_NOW,
+    )
+    assert f.fill_price == Decimal("150.00")
+    assert f.commission == Decimal("0.50")
+
+
+def test_fill_rejects_float_fill_price() -> None:
+    with pytest.raises(ValidationError, match="Decimal"):
+        Fill(
+            fill_id=uuid4(), order_id=uuid4(), symbol="AAPL", side="buy",
+            filled_quantity=Decimal("10"), fill_price=150.0,  # float
+            commission=Decimal("0.50"), filled_at=UTC_NOW,
+        )
+
+
+def test_fill_rejects_naive_filled_at() -> None:
+    with pytest.raises(ValidationError):
+        Fill(
+            fill_id=uuid4(), order_id=uuid4(), symbol="AAPL", side="buy",
+            filled_quantity=Decimal("10"), fill_price=Decimal("150.00"),
+            commission=Decimal("0.50"), filled_at=NAIVE_DT,
+        )
+
+
+# ── OrderRequest — additional coverage ───────────────────────────────────────
+
+def test_order_request_rejects_naive_requested_at() -> None:
+    with pytest.raises(ValidationError):
+        OrderRequest(
+            order_id=uuid4(), symbol="AAPL", side="buy",
+            quantity=Decimal("10"), requested_at=NAIVE_DT,
+            strategy_id="momentum_v1",
+        )
+
+
+def test_order_request_rejects_zero_quantity() -> None:
+    with pytest.raises(ValidationError):
+        OrderRequest(
+            order_id=uuid4(), symbol="AAPL", side="buy",
+            quantity=Decimal("0"),  # zero — invalid
+            requested_at=UTC_NOW, strategy_id="momentum_v1",
+        )
+
+
+# ── TargetPosition — additional coverage ─────────────────────────────────────
+
+def test_target_position_rejects_float_weight() -> None:
+    with pytest.raises(ValidationError, match="Decimal"):
+        TargetPosition(
+            strategy_id="momentum_v1", symbol="AAPL",
+            target_weight=0.5,  # float
+            rationale="test", computed_at=UTC_NOW,
+        )
+
+
+def test_target_position_rejects_negative_weight() -> None:
+    with pytest.raises(ValidationError):
+        TargetPosition(
+            strategy_id="momentum_v1", symbol="AAPL",
+            target_weight=Decimal("-0.01"),  # negative
+            rationale="test", computed_at=UTC_NOW,
+        )
+
+
+# ── Bar — additional coverage ─────────────────────────────────────────────────
+
+def test_bar_rejects_negative_volume() -> None:
+    with pytest.raises(ValidationError):
+        Bar(
+            symbol="AAPL", timestamp=UTC_NOW,
+            open=Decimal("150.00"), high=Decimal("155.00"),
+            low=Decimal("149.00"), close=Decimal("153.50"),
+            volume=-1,  # negative — invalid
+        )
+
+
+# ── strict=True coercion protection ──────────────────────────────────────────
+
+def test_strict_mode_rejects_string_price() -> None:
+    """strict=True must reject str where Decimal is expected."""
+    with pytest.raises(ValidationError):
+        Bar(
+            symbol="AAPL", timestamp=UTC_NOW,
+            open="150.00",  # string — must be rejected by strict=True
+            high=Decimal("155.00"), low=Decimal("149.00"),
+            close=Decimal("153.50"), volume=100_000,
+        )
