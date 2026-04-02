@@ -10,7 +10,7 @@ dependencies = [
     "alembic>=1.13",
     "aiosqlite>=0.20",
     "greenlet>=3.3.2",
-    "ib-async>=0.9",
+    "ib-async>=2.1,<3",
 ]
 
 [project.optional-dependencies]
