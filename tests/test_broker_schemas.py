@@ -1,17 +1,18 @@
 """Tests for broker-specific Pydantic schemas."""
+from datetime import UTC, datetime
 from decimal import Decimal
-from datetime import datetime, UTC
 from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
 from polara.broker.schemas import (
     AccountInfo,
-    Position,
-    PnLSnapshot,
     BrokerStatus,
     OrderStatus,
     OrderWithFills,
+    PnLSnapshot,
+    Position,
 )
 
 
@@ -134,7 +135,6 @@ def test_order_status_rejects_invalid_status():
 # ── OrderWithFills ─────────────────────────────────────────────────────────────
 
 def test_order_with_fills_empty():
-    from polara.schemas.orders import Fill, OrderSide
     o = OrderWithFills(
         order_id=uuid4(),
         ib_order_id=None,
