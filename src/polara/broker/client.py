@@ -49,6 +49,8 @@ class IBClient:
     async def connect(self) -> None:
         """Attempt initial connection. Logs warning and returns if unreachable."""
         self._shutdown = False
+        if self._ib.isConnected():
+            return
         await self._try_connect()
 
     async def disconnect(self) -> None:
@@ -93,6 +95,8 @@ class IBClient:
         if self._shutdown:
             return
         logger.warning("IBClient disconnected — scheduling reconnect")
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self) -> None:
