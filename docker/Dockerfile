@@ -25,6 +25,5 @@ RUN addgroup --system polara && adduser --system --ingroup polara polara
 RUN chown -R polara:polara /app
 USER polara
 
-COPY docker/entrypoint.sh ./entrypoint.sh
-RUN chmod +x entrypoint.sh
+COPY --chmod=755 docker/entrypoint.sh ./entrypoint.sh
 CMD ["./entrypoint.sh"]
