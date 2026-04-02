@@ -33,6 +33,8 @@ class OrderRequest(BaseModel):
             return v  # None is valid for Optional[Decimal] fields
         if isinstance(v, float):
             raise ValueError("use Decimal, not float, for monetary values")
+        if isinstance(v, str):
+            return Decimal(v)
         return v
 
     @field_validator("quantity", mode="after")

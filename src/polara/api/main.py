@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from polara.api.routes.broker import router as broker_router
 from polara.api.routes.health import router as health_router
 from polara.db.connection import DATABASE_URL
 
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Polara Quant", version=_get_version(), lifespan=_lifespan)
 
     app.include_router(health_router)
+    app.include_router(broker_router)
 
     return app
 
