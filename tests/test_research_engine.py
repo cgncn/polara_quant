@@ -194,3 +194,100 @@ def test_ma_crossover_bars_needed_is_slow_period_plus_one():
         quantity=Decimal("1"), bar_size="5 mins",
     )
     assert strategy.bars_needed == 51  # slow_period + 1
+
+
+# ── StrategyScheduler tests ─────────────────────────────────────────────────
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+from polara.research_engine.scheduler import StrategyScheduler
+from polara.risk_guard.exceptions import RiskViolationError
+
+
+@pytest.mark.asyncio
+async def test_scheduler_run_once_calls_get_bars_and_on_bars():
+    mock_svc = AsyncMock()
+    mock_svc.get_bars = AsyncMock(return_value=[make_bar()])
+
+    strategy = MagicMock()
+    strategy.strategy_id = "test"
+    strategy.symbol = "AAPL"
+    strategy.bars_needed = 51
+    strategy.bar_size = "5 mins"
+    strategy.on_bars = MagicMock(return_value=None)
+
+    registry = MagicMock()
+    registry.get_all = MagicMock(return_value=[strategy])
+
+    mock_manager = AsyncMock()
+    scheduler = StrategyScheduler(
+        market_data_svc=mock_svc,
+        registry=registry,
+        order_manager=mock_manager,
+        interval_seconds=60,
+    )
+    await scheduler._run_once()
+
+    mock_svc.get_bars.assert_called_once_with("AAPL", n=51, bar_size="5 mins")
+    strategy.on_bars.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_submits_signal_when_generated():
+    mock_svc = AsyncMock()
+    mock_svc.get_bars = AsyncMock(return_value=[make_bar()] * 51)
+
+    signal = Signal(
+        signal_id=uuid4(),
+        strategy_id="test",
+        symbol="AAPL",
+        strength=Decimal("1"),
+        generated_at=datetime.now(UTC),
+    )
+    strategy = MagicMock()
+    strategy.strategy_id = "test"
+    strategy.symbol = "AAPL"
+    strategy.bars_needed = 51
+    strategy.bar_size = "5 mins"
+    strategy.on_bars = MagicMock(return_value=signal)
+
+    registry = MagicMock()
+    registry.get_all = MagicMock(return_value=[strategy])
+
+    mock_manager = AsyncMock()
+    mock_manager.process_signal = AsyncMock(return_value=None)
+
+    scheduler = StrategyScheduler(
+        market_data_svc=mock_svc,
+        registry=registry,
+        order_manager=mock_manager,
+        interval_seconds=60,
+    )
+    await scheduler._run_once()
+    mock_manager.process_signal.assert_called_once_with(signal)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_continues_after_exception():
+    """Scheduler logs and continues if a strategy raises unexpectedly."""
+    mock_svc = AsyncMock()
+    mock_svc.get_bars = AsyncMock(side_effect=Exception("IB error"))
+
+    strategy = MagicMock()
+    strategy.strategy_id = "test"
+    strategy.symbol = "AAPL"
+    strategy.bars_needed = 51
+    strategy.bar_size = "5 mins"
+
+    registry = MagicMock()
+    registry.get_all = MagicMock(return_value=[strategy])
+
+    mock_manager = AsyncMock()
+    scheduler = StrategyScheduler(
+        market_data_svc=mock_svc,
+        registry=registry,
+        order_manager=mock_manager,
+        interval_seconds=60,
+    )
+    # Should not raise
+    await scheduler._run_once()
