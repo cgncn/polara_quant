@@ -64,6 +64,7 @@ async def test_fetch_bars_prices_are_decimal():
     assert isinstance(bars[0].close, Decimal)
     assert isinstance(bars[0].open, Decimal)
     assert isinstance(bars[0].volume, int)
+    assert bars[0].close == Decimal("170.5")
 
 
 @pytest.mark.asyncio
@@ -90,6 +91,38 @@ async def test_fetch_bars_symbol_set_correctly():
 
 
 @pytest.mark.asyncio
+async def test_fetch_bars_daily_bar_date_format():
+    """IB uses YYYYMMDD (no time) for daily bars — ensure this parses correctly."""
+    mock_ib = AsyncMock()
+    mock_ib.reqHistoricalDataAsync = AsyncMock(
+        return_value=[make_mock_ib_bar(date="20260403")]
+    )
+    fetcher = IBFetcher(mock_ib)
+    bars = await fetcher.fetch_bars("AAPL", n=1, bar_size="1 day")
+    assert len(bars) == 1
+    assert bars[0].timestamp.tzinfo is not None
+    assert bars[0].timestamp.year == 2026
+    assert bars[0].timestamp.month == 4
+    assert bars[0].timestamp.day == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_bars_truncates_to_n():
+    """IB may return more bars than requested; only last n should be returned."""
+    mock_ib = AsyncMock()
+    mock_ib.reqHistoricalDataAsync = AsyncMock(
+        return_value=[
+            make_mock_ib_bar(close=str(float(100 + i))) for i in range(5)
+        ]
+    )
+    fetcher = IBFetcher(mock_ib)
+    bars = await fetcher.fetch_bars("AAPL", n=3, bar_size="5 mins")
+    assert len(bars) == 3
+    # Should be the last 3 bars (most recent)
+    assert bars[-1].close == Decimal("104.0")
+
+
+@pytest.mark.asyncio
 async def test_fetch_quote_returns_quote():
     mock_ib = AsyncMock()
     mock_ib.reqTickersAsync = AsyncMock(return_value=[make_mock_ticker()])
@@ -109,3 +142,12 @@ async def test_fetch_quote_prices_are_decimal():
     quote = await fetcher.fetch_quote("AAPL")
     assert quote.bid == Decimal("170.0")
     assert quote.ask == Decimal("170.1")
+
+
+@pytest.mark.asyncio
+async def test_fetch_quote_raises_on_empty_response():
+    mock_ib = AsyncMock()
+    mock_ib.reqTickersAsync = AsyncMock(return_value=[])
+    fetcher = IBFetcher(mock_ib)
+    with pytest.raises(ValueError, match="No ticker data"):
+        await fetcher.fetch_quote("AAPL")

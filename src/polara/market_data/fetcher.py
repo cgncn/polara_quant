@@ -84,6 +84,8 @@ class IBFetcher:
         """Fetch live bid/ask for symbol."""
         contract = self._make_contract(symbol)
         tickers = await self._ib.reqTickersAsync(contract)
+        if not tickers:
+            raise ValueError(f"No ticker data returned for {symbol}")
         t = tickers[0]
         return Quote(
             symbol=symbol,
