@@ -220,3 +220,47 @@ def test_store_query_empty_returns_empty(tmp_path):
     store = BarStore(str(tmp_path / "test.duckdb"))
     result = store.query("AAPL", n=10, bar_size="5 mins")
     assert result == []
+
+
+# ── MarketDataService tests ─────────────────────────────────────────────────
+from polara.market_data.service import MarketDataService
+
+
+@pytest.mark.asyncio
+async def test_service_get_bars_fetches_and_stores(tmp_path):
+    mock_ib = AsyncMock()
+    mock_ib.reqHistoricalDataAsync = AsyncMock(
+        return_value=[make_mock_ib_bar(date="20260403 10:00:00")]
+    )
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    fetcher = IBFetcher(mock_ib)
+    svc = MarketDataService(fetcher=fetcher, store=store)
+    bars = await svc.get_bars("AAPL", n=1, bar_size="5 mins")
+    assert len(bars) == 1
+    assert bars[0].symbol == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_service_get_bars_returns_from_store_on_fetch_failure(tmp_path):
+    """If IB fetch fails, service returns whatever is already in the store."""
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    store.upsert([make_bar()], bar_size="5 mins")
+
+    mock_ib = AsyncMock()
+    mock_ib.reqHistoricalDataAsync = AsyncMock(side_effect=Exception("IB unavailable"))
+    fetcher = IBFetcher(mock_ib)
+    svc = MarketDataService(fetcher=fetcher, store=store)
+    bars = await svc.get_bars("AAPL", n=1, bar_size="5 mins")
+    assert len(bars) == 1
+
+
+@pytest.mark.asyncio
+async def test_service_get_latest_quote(tmp_path):
+    mock_ib = AsyncMock()
+    mock_ib.reqTickersAsync = AsyncMock(return_value=[make_mock_ticker(bid=169.9, ask=170.1)])
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    fetcher = IBFetcher(mock_ib)
+    svc = MarketDataService(fetcher=fetcher, store=store)
+    quote = await svc.get_latest_quote("AAPL")
+    assert quote.symbol == "AAPL"
+    assert quote.bid == Decimal("169.9")
