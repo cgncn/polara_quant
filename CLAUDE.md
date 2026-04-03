@@ -14,6 +14,6 @@
 - Run `uv run ruff check src/` before committing
 
 ## Phase Status
-Current phase: Phase 2 (Broker Adapter)
-Do NOT build: order_manager, risk_guard, research_engine, validator, market_data_streaming
-These are Phase 3+ work.
+Current phase: Phase 3 (Full Trading Loop)
+Do NOT build: validator, live-trading promotion
+These are Phase 4+ work.
