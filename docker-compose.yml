@@ -26,6 +26,16 @@ services:
       - IB_HOST=ib-gateway
       - IB_PORT=4003
       - IB_CLIENT_ID=1
+      - MARKET_DATA_DB_PATH=data/market_data.duckdb
+      - STRATEGY_INTERVAL_SECONDS=60
+      - RISK_MAX_POSITION_PCT=10
+      - RISK_MAX_DAILY_LOSS_PCT=5
+      - MA_STRATEGY_ID=ma-crossover-aapl
+      - MA_STRATEGY_SYMBOL=AAPL
+      - MA_FAST_PERIOD=10
+      - MA_SLOW_PERIOD=50
+      - MA_QUANTITY=1
+      - MA_BAR_SIZE=5 mins
     depends_on:
       - ib-gateway
     restart: unless-stopped

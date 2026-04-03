@@ -1,8 +1,10 @@
+"""FastAPI application factory and lifespan for Polara Quant."""
 import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from decimal import Decimal
 
 from fastapi import FastAPI
 
@@ -13,6 +15,14 @@ from polara.api.routes.strategy import router as strategy_router
 from polara.broker.adapter import BrokerAdapter
 from polara.broker.client import IBClient
 from polara.db.connection import DATABASE_URL, AsyncSessionLocal
+from polara.market_data.fetcher import IBFetcher
+from polara.market_data.service import MarketDataService
+from polara.market_data.store import BarStore
+from polara.order_manager.manager import OrderManager
+from polara.research_engine.registry import StrategyRegistry
+from polara.research_engine.scheduler import StrategyScheduler
+from polara.research_engine.strategies.ma_crossover import MACrossoverStrategy
+from polara.risk_guard.guard import RiskGuard
 
 logger = logging.getLogger(__name__)
 
@@ -29,29 +39,87 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Only create IBClient + adapter if not already injected (allows test injection)
     if not hasattr(app.state, "broker_adapter"):
         ib_client = IBClient(host=IB_HOST, port=IB_PORT, client_id=IB_CLIENT_ID)
-        await ib_client.connect()
         try:
-            # Build adapter and register fill/order-status callbacks
-            adapter = BrokerAdapter(ib_client=ib_client, db_session_factory=AsyncSessionLocal)
-            adapter._register_callbacks()
-            app.state.ib_client = ib_client
-            app.state.broker_adapter = adapter
-
-            # Start P&L snapshot background task (every 60 seconds)
-            pnl_task = asyncio.create_task(adapter.pnl_snapshot_loop())
-            app.state.pnl_task = pnl_task
+            await ib_client.connect()
         except Exception:
+            logger.error("Failed to connect to IB Gateway on startup", exc_info=True)
             await ib_client.disconnect()
             raise
+
+        # Phase 2: Broker adapter
+        adapter = BrokerAdapter(ib_client=ib_client, db_session_factory=AsyncSessionLocal)
+        adapter._register_callbacks()
+        app.state.ib_client = ib_client
+        app.state.broker_adapter = adapter
+
+        # Phase 3: Market data
+        market_data_db_path = os.environ.get("MARKET_DATA_DB_PATH", "data/market_data.duckdb")
+        fetcher = IBFetcher(ib=ib_client.ib)
+        store = BarStore(db_path=market_data_db_path)
+        market_data_svc = MarketDataService(fetcher=fetcher, store=store)
+        app.state.market_data_svc = market_data_svc
+
+        # Phase 3: Risk guard
+        risk_guard = RiskGuard(
+            max_position_pct=Decimal(os.environ.get("RISK_MAX_POSITION_PCT", "10")),
+            max_daily_loss_pct=Decimal(os.environ.get("RISK_MAX_DAILY_LOSS_PCT", "5")),
+        )
+
+        # Phase 3: Order manager
+        order_manager = OrderManager(
+            broker_adapter=adapter,
+            risk_guard=risk_guard,
+            db_session_factory=AsyncSessionLocal,
+        )
+        app.state.order_manager = order_manager
+
+        # Phase 3: Strategy registry
+        registry = StrategyRegistry()
+        registry.register(
+            MACrossoverStrategy(
+                strategy_id=os.environ.get("MA_STRATEGY_ID", "ma-crossover-aapl"),
+                symbol=os.environ.get("MA_STRATEGY_SYMBOL", "AAPL"),
+                fast_period=int(os.environ.get("MA_FAST_PERIOD", "10")),
+                slow_period=int(os.environ.get("MA_SLOW_PERIOD", "50")),
+                quantity=Decimal(os.environ.get("MA_QUANTITY", "1")),
+                bar_size=os.environ.get("MA_BAR_SIZE", "5 mins"),
+            )
+        )
+        app.state.strategy_registry = registry
+
+        # Background tasks
+        scheduler = StrategyScheduler(
+            market_data_svc=market_data_svc,
+            registry=registry,
+            order_manager=order_manager,
+            interval_seconds=int(os.environ.get("STRATEGY_INTERVAL_SECONDS", "60")),
+        )
+        pnl_task = asyncio.create_task(adapter.pnl_snapshot_loop())
+        scheduler_task = asyncio.create_task(scheduler.run())
+        app.state.pnl_task = pnl_task
+        app.state.scheduler_task = scheduler_task
+
+        logger.info(
+            "Phase 3 trading loop started — strategy scheduler running every %ss",
+            os.environ.get("STRATEGY_INTERVAL_SECONDS", "60"),
+        )
 
     yield
 
     # Shutdown
+    if hasattr(app.state, "scheduler_task"):
+        app.state.scheduler_task.cancel()
     if hasattr(app.state, "pnl_task"):
         app.state.pnl_task.cancel()
+    tasks_to_gather = []
+    if hasattr(app.state, "scheduler_task"):
+        tasks_to_gather.append(app.state.scheduler_task)
+    if hasattr(app.state, "pnl_task"):
+        tasks_to_gather.append(app.state.pnl_task)
+    if tasks_to_gather:
         try:
-            await app.state.pnl_task
-        except asyncio.CancelledError:
+            await asyncio.gather(*tasks_to_gather, return_exceptions=True)
+        except Exception:
             pass
     if hasattr(app.state, "ib_client"):
         await app.state.ib_client.disconnect()
