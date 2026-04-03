@@ -151,3 +151,72 @@ async def test_fetch_quote_raises_on_empty_response():
     fetcher = IBFetcher(mock_ib)
     with pytest.raises(ValueError, match="No ticker data"):
         await fetcher.fetch_quote("AAPL")
+
+
+# ── BarStore tests ──────────────────────────────────────────────────────────
+from datetime import datetime
+
+from polara.market_data.store import BarStore
+
+
+def make_bar(
+    symbol: str = "AAPL",
+    ts: str = "2026-04-03T10:00:00+00:00",
+    close: str = "170.50",
+) -> Bar:
+    return Bar(
+        symbol=symbol,
+        timestamp=datetime.fromisoformat(ts),
+        open=Decimal("170.00"),
+        high=Decimal("171.00"),
+        low=Decimal("169.50"),
+        close=Decimal(close),
+        volume=1000,
+    )
+
+
+def test_store_upsert_and_query(tmp_path):
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    bars = [make_bar(ts="2026-04-03T10:00:00+00:00"), make_bar(ts="2026-04-03T10:05:00+00:00")]
+    store.upsert(bars, bar_size="5 mins")
+    result = store.query("AAPL", n=10, bar_size="5 mins")
+    assert len(result) == 2
+    assert all(isinstance(b, Bar) for b in result)
+    assert all(isinstance(b.close, Decimal) for b in result)
+
+
+def test_store_upsert_deduplicates(tmp_path):
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    bar = make_bar(ts="2026-04-03T10:00:00+00:00", close="170.50")
+    store.upsert([bar], bar_size="5 mins")
+    updated_bar = make_bar(ts="2026-04-03T10:00:00+00:00", close="171.00")
+    store.upsert([updated_bar], bar_size="5 mins")
+    result = store.query("AAPL", n=10, bar_size="5 mins")
+    assert len(result) == 1
+    assert result[0].close == Decimal("171.00")
+
+
+def test_store_query_returns_n_latest(tmp_path):
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    bars = [
+        make_bar(ts=f"2026-04-03T{10 + i:02d}:00:00+00:00", close=str(170 + i))
+        for i in range(5)
+    ]
+    store.upsert(bars, bar_size="5 mins")
+    result = store.query("AAPL", n=3, bar_size="5 mins")
+    assert len(result) == 3
+    # Should return the 3 most recent, ordered oldest-first
+    assert result[-1].close == Decimal("174")
+
+
+def test_store_query_timestamps_are_utc(tmp_path):
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    store.upsert([make_bar()], bar_size="5 mins")
+    result = store.query("AAPL", n=1, bar_size="5 mins")
+    assert result[0].timestamp.tzinfo is not None
+
+
+def test_store_query_empty_returns_empty(tmp_path):
+    store = BarStore(str(tmp_path / "test.duckdb"))
+    result = store.query("AAPL", n=10, bar_size="5 mins")
+    assert result == []
