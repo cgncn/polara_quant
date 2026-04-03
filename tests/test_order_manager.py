@@ -7,6 +7,7 @@ import pytest
 
 from polara.broker.schemas import AccountInfo, OrderStatus, Position
 from polara.order_manager.manager import OrderManager
+from polara.research_engine.status_service import StrategyStatusService
 from polara.risk_guard.exceptions import RiskViolationError
 from polara.risk_guard.guard import RiskGuard
 from polara.schemas.signals import Signal
@@ -61,13 +62,24 @@ def make_mock_db_session():
     return db_factory, session
 
 
+def make_mock_status_service(status: str = "live") -> AsyncMock:
+    svc = AsyncMock(spec=StrategyStatusService)
+    svc.get_status = AsyncMock(return_value=status)
+    return svc
+
+
 @pytest.mark.asyncio
 async def test_process_signal_buy_submits_order():
     adapter = make_mock_adapter()
     guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
     db_factory, session = make_mock_db_session()
 
-    manager = OrderManager(broker_adapter=adapter, risk_guard=guard, db_session_factory=db_factory)
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
     result = await manager.process_signal(make_signal(strength="1"))
 
     assert result is not None
@@ -84,7 +96,12 @@ async def test_process_signal_sell_on_negative_strength():
     guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
     db_factory, session = make_mock_db_session()
 
-    manager = OrderManager(broker_adapter=adapter, risk_guard=guard, db_session_factory=db_factory)
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
     result = await manager.process_signal(make_signal(strength="-1"))
 
     order_req = adapter.place_order.call_args[0][0]
@@ -98,7 +115,12 @@ async def test_process_signal_returns_none_on_risk_violation():
     mock_guard.check_daily_loss = MagicMock(side_effect=RiskViolationError("loss exceeded"))
     db_factory, _ = make_mock_db_session()
 
-    manager = OrderManager(broker_adapter=adapter, risk_guard=mock_guard, db_session_factory=db_factory)
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=mock_guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
     result = await manager.process_signal(make_signal())
 
     assert result is None
@@ -111,7 +133,12 @@ async def test_process_signal_writes_signal_orders_row():
     guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
     db_factory, session = make_mock_db_session()
 
-    manager = OrderManager(broker_adapter=adapter, risk_guard=guard, db_session_factory=db_factory)
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
     await manager.process_signal(make_signal())
 
     # Verify execute was called (signal_orders insert)
@@ -125,9 +152,71 @@ async def test_process_signal_order_quantity_is_one():
     guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
     db_factory, _ = make_mock_db_session()
 
-    manager = OrderManager(broker_adapter=adapter, risk_guard=guard, db_session_factory=db_factory)
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
     await manager.process_signal(make_signal())
 
     order_req = adapter.place_order.call_args[0][0]
     assert order_req.quantity == Decimal("1")
     assert isinstance(order_req.quantity, Decimal)
+
+
+@pytest.mark.asyncio
+async def test_process_signal_skipped_when_status_not_live():
+    """Signal from a paper/non-live strategy should be silently skipped."""
+    adapter = make_mock_adapter()
+    guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("paper"),
+    )
+    result = await manager.process_signal(make_signal())
+
+    assert result is None
+    adapter.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_signal_skipped_when_status_is_none():
+    """Signal with no DB row (status=None) should be skipped."""
+    adapter = make_mock_adapter()
+    guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service(None),
+    )
+    result = await manager.process_signal(make_signal())
+
+    assert result is None
+    adapter.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_signal_proceeds_when_status_is_live():
+    """Signal from a live strategy should proceed through risk checks and submit."""
+    adapter = make_mock_adapter()
+    guard = RiskGuard(max_position_pct=Decimal("20"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    result = await manager.process_signal(make_signal())
+
+    assert result is not None
+    adapter.place_order.assert_called_once()

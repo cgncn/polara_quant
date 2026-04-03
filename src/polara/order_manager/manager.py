@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from polara.broker.adapter import BrokerAdapter
 from polara.broker.schemas import OrderStatus
+from polara.research_engine.status_service import StrategyStatusService
 from polara.risk_guard.exceptions import RiskViolationError
 from polara.risk_guard.guard import RiskGuard
 from polara.schemas.orders import OrderRequest
@@ -30,13 +31,27 @@ class OrderManager:
         broker_adapter: BrokerAdapter,
         risk_guard: RiskGuard,
         db_session_factory,
+        status_service: StrategyStatusService,
     ) -> None:
         self._adapter = broker_adapter
         self._risk_guard = risk_guard
         self._db = db_session_factory
+        self._status_service = status_service
 
     async def process_signal(self, signal: Signal) -> OrderStatus | None:
-        """Run risk checks and submit order. Returns None if risk check fails."""
+        """Run risk checks and submit order.
+
+        Returns None if strategy is not live or risk check fails.
+        """
+        status = await self._status_service.get_status(signal.strategy_id)
+        if status != "live":
+            logger.info(
+                "Signal from strategy %s skipped — status is %r (not live)",
+                signal.strategy_id,
+                status,
+            )
+            return None
+
         try:
             account = await self._adapter.get_account()
             positions = await self._adapter.get_positions()

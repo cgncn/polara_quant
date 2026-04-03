@@ -171,3 +171,73 @@ def test_downgrade_0001_removes_broker_tables() -> None:
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = original
+
+
+def test_upgrade_creates_backtest_results_table() -> None:
+    """Phase 4 migration creates the backtest_results table."""
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "backtest_results" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_downgrade_0003_removes_backtest_results_table() -> None:
+    """Downgrading to 0003 removes backtest_results."""
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0003")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "backtest_results" not in tables
+        # Phase-3 tables must still exist
+        assert "signal_orders" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_strategies_status_accepts_live_after_migration() -> None:
+    """After Phase 4 migration, strategies.status='live' is a valid value."""
+    import asyncio as _asyncio
+
+    async def _insert_live(db_url: str) -> None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy import text as _text
+        engine = create_async_engine(db_url)
+        async with engine.begin() as conn:
+            await conn.execute(_text(
+                "INSERT INTO strategies (id, name, status, created_at) "
+                "VALUES ('s1', 'test', 'live', '2026-01-01T00:00:00')"
+            ))
+        await engine.dispose()
+
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        # Should not raise
+        _asyncio.run(_insert_live(f"sqlite+aiosqlite:///{db_path}"))
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original

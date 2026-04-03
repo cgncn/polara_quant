@@ -12,6 +12,7 @@ from polara.api.routes.broker import router as broker_router
 from polara.api.routes.health import router as health_router
 from polara.api.routes.market_data import router as market_data_router
 from polara.api.routes.strategy import router as strategy_router
+from polara.backtester.service import BacktestService
 from polara.broker.adapter import BrokerAdapter
 from polara.broker.client import IBClient
 from polara.db.connection import DATABASE_URL, AsyncSessionLocal
@@ -19,9 +20,12 @@ from polara.market_data.fetcher import IBFetcher
 from polara.market_data.service import MarketDataService
 from polara.market_data.store import BarStore
 from polara.order_manager.manager import OrderManager
+from polara.research_engine.promotion import PromotionGate
 from polara.research_engine.registry import StrategyRegistry
 from polara.research_engine.scheduler import StrategyScheduler
+from polara.research_engine.status_service import StrategyStatusService
 from polara.research_engine.strategies.ma_crossover import MACrossoverStrategy
+from polara.research_engine.strategies.rsi_mean_reversion import RSIMeanReversionStrategy
 from polara.risk_guard.guard import RiskGuard
 
 logger = logging.getLogger(__name__)
@@ -58,6 +62,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         store = BarStore(db_path=market_data_db_path)
         market_data_svc = MarketDataService(fetcher=fetcher, store=store)
         app.state.market_data_svc = market_data_svc
+        app.state.bar_store = store
 
         # Phase 3: Risk guard
         risk_guard = RiskGuard(
@@ -65,19 +70,37 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             max_daily_loss_pct=Decimal(os.environ.get("RISK_MAX_DAILY_LOSS_PCT", "5")),
         )
 
-        # Phase 3: Order manager
+        # Phase 4: Strategy status service + backtest service
+        status_service = StrategyStatusService(db_session_factory=AsyncSessionLocal)
+        app.state.status_service = status_service
+
+        backtest_svc = BacktestService(db_session_factory=AsyncSessionLocal)
+        app.state.backtest_svc = backtest_svc
+
+        # Phase 3: Order manager (Phase 4: gains status_service check)
         order_manager = OrderManager(
             broker_adapter=adapter,
             risk_guard=risk_guard,
             db_session_factory=AsyncSessionLocal,
+            status_service=status_service,
         )
         app.state.order_manager = order_manager
 
-        # Phase 3: Strategy registry
+        # Phase 4: Promotion gate
+        promotion_gate = PromotionGate(
+            status_service=status_service,
+            backtest_service=backtest_svc,
+        )
+        app.state.promotion_gate = promotion_gate
+
+        # Phase 3+4: Strategy registry
+        ma_strategy_id = os.environ.get("MA_STRATEGY_ID", "ma-crossover-aapl")
+        rsi_strategy_id = os.environ.get("RSI_STRATEGY_ID", "rsi-aapl")
+
         registry = StrategyRegistry()
         registry.register(
             MACrossoverStrategy(
-                strategy_id=os.environ.get("MA_STRATEGY_ID", "ma-crossover-aapl"),
+                strategy_id=ma_strategy_id,
                 symbol=os.environ.get("MA_STRATEGY_SYMBOL", "AAPL"),
                 fast_period=int(os.environ.get("MA_FAST_PERIOD", "10")),
                 slow_period=int(os.environ.get("MA_SLOW_PERIOD", "50")),
@@ -85,7 +108,26 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 bar_size=os.environ.get("MA_BAR_SIZE", "5 mins"),
             )
         )
+        registry.register(
+            RSIMeanReversionStrategy(
+                strategy_id=rsi_strategy_id,
+                symbol=os.environ.get("RSI_STRATEGY_SYMBOL", "AAPL"),
+                period=int(os.environ.get("RSI_PERIOD", "14")),
+                oversold=Decimal(os.environ.get("RSI_OVERSOLD", "30")),
+                overbought=Decimal(os.environ.get("RSI_OVERBOUGHT", "70")),
+                quantity=Decimal(os.environ.get("RSI_QUANTITY", "1")),
+                bar_size=os.environ.get("RSI_BAR_SIZE", "5 mins"),
+            )
+        )
         app.state.strategy_registry = registry
+
+        # Seed DB status rows for all registered strategies (paper by default)
+        for strategy in registry.get_all():
+            await status_service.ensure_registered(
+                strategy_id=strategy.strategy_id,
+                name=strategy.strategy_id,
+                status="paper",
+            )
 
         # Background tasks
         scheduler = StrategyScheduler(
@@ -100,7 +142,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.scheduler_task = scheduler_task
 
         logger.info(
-            "Phase 3 trading loop started — strategy scheduler running every %ss",
+            "Phase 4 trading loop started — strategy scheduler running every %ss",
             os.environ.get("STRATEGY_INTERVAL_SECONDS", "60"),
         )
 
