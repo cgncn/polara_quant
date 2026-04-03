@@ -8,6 +8,8 @@ from fastapi import FastAPI
 
 from polara.api.routes.broker import router as broker_router
 from polara.api.routes.health import router as health_router
+from polara.api.routes.market_data import router as market_data_router
+from polara.api.routes.strategy import router as strategy_router
 from polara.broker.adapter import BrokerAdapter
 from polara.broker.client import IBClient
 from polara.db.connection import DATABASE_URL, AsyncSessionLocal
@@ -61,6 +63,8 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(broker_router)
+    app.include_router(market_data_router)
+    app.include_router(strategy_router)
 
     return app
 
