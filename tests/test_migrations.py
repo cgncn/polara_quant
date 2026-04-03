@@ -108,6 +108,46 @@ def test_upgrade_creates_broker_tables() -> None:
             os.environ["DATABASE_URL"] = original
 
 
+def test_upgrade_creates_signal_orders_table() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "signal_orders" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_downgrade_0002_removes_signal_orders_table() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0002")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "signal_orders" not in tables
+        # Phase-2 tables must still be present
+        assert "orders" in tables
+        assert "fills" in tables
+        assert "positions" in tables
+        assert "account_snapshots" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
 def test_downgrade_0001_removes_broker_tables() -> None:
     original = os.environ.get("DATABASE_URL")
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
