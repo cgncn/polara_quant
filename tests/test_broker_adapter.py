@@ -18,6 +18,7 @@ def make_mock_ib_client(connected: bool = True) -> MagicMock:
     client.connected = connected
     ib = MagicMock()
     ib.isConnected.return_value = connected
+    ib.managedAccounts.return_value = []
     client.ib = ib
     return client
 

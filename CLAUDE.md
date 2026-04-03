@@ -1,7 +1,7 @@
 # Polara Quant — Claude Code Rules
 
 ## Non-Negotiable Operating Rules
-1. **Never use `float` for money, prices, commissions, or quantities.** Always use `Decimal`.
+1. **Never use `float` for money, prices, commissions, or quantities.** Always use `Decimal`. The sole exception is values passed directly to `ib_async` order constructors (`LimitOrder`, `MarketOrder`) which require `float` at the IB API boundary — convert from `Decimal` via `float()` only there.
 2. **All datetimes must be UTC-aware.** Use `datetime.now(UTC)` or `datetime(..., tzinfo=UTC)`. Never `datetime.utcnow()` (naive).
 3. **Pydantic models use `strict=True`.** No silent type coercion.
 4. **SQLite now, Postgres-compatible always.** No SQLite-specific SQL syntax.

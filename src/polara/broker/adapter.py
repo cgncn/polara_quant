@@ -45,6 +45,17 @@ _INSERT_PNL_SNAPSHOT = text("""
         (:id, :net_liquidation, :cash, :unrealised_pnl, :realised_pnl, :snapshot_at)
 """)
 
+# PostgreSQL 9.5+ and SQLite 3.24+ portable upsert syntax — not SQLite-specific.
+_UPSERT_POSITION = text("""
+    INSERT INTO positions (id, symbol, quantity, avg_cost, unrealised_pnl, updated_at)
+    VALUES (:id, :symbol, :quantity, :avg_cost, :unrealised_pnl, :updated_at)
+    ON CONFLICT (symbol) DO UPDATE SET
+        quantity = excluded.quantity,
+        avg_cost = excluded.avg_cost,
+        unrealised_pnl = excluded.unrealised_pnl,
+        updated_at = excluded.updated_at
+""")
+
 
 class BrokerDisconnectedError(RuntimeError):
     """Raised when an operation requires IB Gateway but it is not connected."""
@@ -72,10 +83,12 @@ class BrokerAdapter:
             server_time = datetime.fromtimestamp(epoch, tz=UTC)
         except Exception:  # noqa: BLE001
             server_time = None
+        accounts = self._client.ib.managedAccounts()
+        account_id = accounts[0] if accounts else None
         return BrokerStatus(
             connected=True,
             ib_server_time=server_time,
-            account_id=None,
+            account_id=account_id,
         )
 
     # ── account ────────────────────────────────────────────────────────────────
@@ -100,10 +113,11 @@ class BrokerAdapter:
 
     # ── positions ──────────────────────────────────────────────────────────────
 
-    async def get_positions(self) -> list[Position]:
+    async def get_positions(self, db: AsyncSession | None = None) -> list[Position]:
         self._require_connected()
         ib_positions = self._client.ib.positions()
         result: list[Position] = []
+        now = datetime.now(UTC)
         for p in ib_positions:
             qty = Decimal(str(p.position))
             avg = Decimal(str(p.avgCost))
@@ -114,9 +128,23 @@ class BrokerAdapter:
                     quantity=qty,
                     avg_cost=avg,
                     unrealised_pnl=unrealised,
-                    updated_at=datetime.now(UTC),
+                    updated_at=now,
                 )
             )
+        if db is not None:
+            for pos in result:
+                await db.execute(
+                    _UPSERT_POSITION,
+                    {
+                        "id": str(uuid.uuid4()),
+                        "symbol": pos.symbol,
+                        "quantity": str(pos.quantity),
+                        "avg_cost": str(pos.avg_cost),
+                        "unrealised_pnl": str(pos.unrealised_pnl),
+                        "updated_at": pos.updated_at.isoformat(),
+                    },
+                )
+            await db.commit()
         return result
 
     # ── orders ─────────────────────────────────────────────────────────────────
@@ -128,6 +156,8 @@ class BrokerAdapter:
 
         contract = Stock(req.symbol, "SMART", "USD")
         action = req.side.upper()
+        # ib_async constructors require float — this is the sole intentional IB API boundary
+        # conversion. All internal representation stays Decimal. See CLAUDE.md Rule 1 exception.
         if req.limit_price is not None:
             order = LimitOrder(action, float(req.quantity), float(req.limit_price))
         else:
@@ -368,6 +398,8 @@ class BrokerAdapter:
                 else:
                     filled_at = datetime.now(UTC).isoformat()
 
+                # ON CONFLICT (fill_id) DO NOTHING: PostgreSQL 9.5+ and SQLite 3.24+
+                # portable syntax — not SQLite-specific.
                 await db.execute(
                     text("""
                         INSERT INTO fills
