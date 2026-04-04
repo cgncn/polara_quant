@@ -64,3 +64,11 @@ def downgrade() -> None:
     """)
     op.execute("DROP TABLE signal_orders")
     op.execute("ALTER TABLE signal_orders_old RENAME TO signal_orders")
+    # Recreate indexes that 0003 originally created — required so 0003's downgrade
+    # can drop them cleanly.
+    op.execute(
+        "CREATE INDEX ix_signal_orders_signal_id ON signal_orders (signal_id)"
+    )
+    op.execute(
+        "CREATE INDEX ix_signal_orders_strategy_id ON signal_orders (strategy_id)"
+    )
