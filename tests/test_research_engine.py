@@ -198,6 +198,56 @@ def test_ma_crossover_bars_needed_is_slow_period_plus_one():
     assert strategy.bars_needed == 51  # slow_period + 1
 
 
+def test_ma_crossover_signal_includes_stop_loss_pct():
+    """stop_loss_pct on strategy propagates to emitted Signal."""
+    strategy = MACrossoverStrategy(
+        strategy_id="test-ma",
+        symbol="AAPL",
+        fast_period=5,
+        slow_period=20,
+        quantity=Decimal("1"),
+        bar_size="5 mins",
+        stop_loss_pct=Decimal("5"),
+    )
+    bars = make_bars_crossover_up()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct == Decimal("5")
+
+
+def test_ma_crossover_signal_includes_take_profit_pct():
+    """take_profit_pct on strategy propagates to emitted Signal."""
+    strategy = MACrossoverStrategy(
+        strategy_id="test-ma",
+        symbol="AAPL",
+        fast_period=5,
+        slow_period=20,
+        quantity=Decimal("1"),
+        bar_size="5 mins",
+        take_profit_pct=Decimal("10"),
+    )
+    bars = make_bars_crossover_up()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.take_profit_pct == Decimal("10")
+
+
+def test_ma_crossover_signal_stop_loss_none_when_not_set():
+    """stop_loss_pct defaults to None on Signal when not configured."""
+    strategy = MACrossoverStrategy(
+        strategy_id="test-ma",
+        symbol="AAPL",
+        fast_period=5,
+        slow_period=20,
+        quantity=Decimal("1"),
+        bar_size="5 mins",
+    )
+    bars = make_bars_crossover_up()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct is None
+
+
 # ── StrategyScheduler tests ─────────────────────────────────────────────────
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4

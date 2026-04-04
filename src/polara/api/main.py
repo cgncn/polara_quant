@@ -107,6 +107,16 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 slow_period=int(os.environ.get("MA_SLOW_PERIOD", "50")),
                 quantity=Decimal(os.environ.get("MA_QUANTITY", "1")),
                 bar_size=os.environ.get("MA_BAR_SIZE", "5 mins"),
+                stop_loss_pct=(
+                    Decimal(os.environ["MA_STOP_LOSS_PCT"])
+                    if os.environ.get("MA_STOP_LOSS_PCT")
+                    else None
+                ),
+                take_profit_pct=(
+                    Decimal(os.environ["MA_TAKE_PROFIT_PCT"])
+                    if os.environ.get("MA_TAKE_PROFIT_PCT")
+                    else None
+                ),
             )
         )
         registry.register(
@@ -118,6 +128,16 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 overbought=Decimal(os.environ.get("RSI_OVERBOUGHT", "70")),
                 quantity=Decimal(os.environ.get("RSI_QUANTITY", "1")),
                 bar_size=os.environ.get("RSI_BAR_SIZE", "5 mins"),
+                stop_loss_pct=(
+                    Decimal(os.environ["RSI_STOP_LOSS_PCT"])
+                    if os.environ.get("RSI_STOP_LOSS_PCT")
+                    else None
+                ),
+                take_profit_pct=(
+                    Decimal(os.environ["RSI_TAKE_PROFIT_PCT"])
+                    if os.environ.get("RSI_TAKE_PROFIT_PCT")
+                    else None
+                ),
             )
         )
         app.state.strategy_registry = registry

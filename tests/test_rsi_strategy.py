@@ -198,3 +198,41 @@ def test_custom_thresholds():
     signal_down = strategy.on_bars(bars_down)
     assert signal_down is not None
     assert signal_down.strength == Decimal("1")
+
+
+# ── stop/take-profit propagation ──────────────────────────────────────────────
+
+
+def _make_oversold_bars() -> list[Bar]:
+    """Steadily declining closes → RSI < 30 → buy signal."""
+    start = Decimal("100")
+    step = Decimal("2")
+    closes = [start - step * Decimal(i) for i in range(20)]
+    return make_bars_with_offset(closes)
+
+
+def test_rsi_signal_includes_stop_loss_pct():
+    """stop_loss_pct on strategy propagates to emitted Signal."""
+    strategy = make_strategy(stop_loss_pct=Decimal("5"))
+    bars = _make_oversold_bars()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct == Decimal("5")
+
+
+def test_rsi_signal_includes_take_profit_pct():
+    """take_profit_pct on strategy propagates to emitted Signal."""
+    strategy = make_strategy(take_profit_pct=Decimal("10"))
+    bars = _make_oversold_bars()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.take_profit_pct == Decimal("10")
+
+
+def test_rsi_signal_stop_loss_none_when_not_set():
+    """stop_loss_pct defaults to None on Signal when not configured."""
+    strategy = make_strategy()
+    bars = _make_oversold_bars()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct is None

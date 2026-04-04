@@ -34,6 +34,8 @@ class MACrossoverStrategy(Strategy):
     slow_period: int
     quantity: Decimal
     bar_size: str
+    stop_loss_pct: Decimal | None = None
+    take_profit_pct: Decimal | None = None
 
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
@@ -65,4 +67,6 @@ class MACrossoverStrategy(Strategy):
             strength=strength,
             generated_at=datetime.now(UTC),
             reference_price=bars[-1].close,
+            stop_loss_pct=self.stop_loss_pct,
+            take_profit_pct=self.take_profit_pct,
         )

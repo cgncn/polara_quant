@@ -55,6 +55,8 @@ class RSIMeanReversionStrategy(Strategy):
     overbought: Decimal = Decimal("70")
     quantity: Decimal = Decimal("1")
     bar_size: str = "5 mins"
+    stop_loss_pct: Decimal | None = None
+    take_profit_pct: Decimal | None = None
 
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
@@ -81,4 +83,6 @@ class RSIMeanReversionStrategy(Strategy):
             strength=strength,
             generated_at=datetime.now(UTC),
             reference_price=bars[-1].close,
+            stop_loss_pct=self.stop_loss_pct,
+            take_profit_pct=self.take_profit_pct,
         )
