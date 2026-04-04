@@ -143,7 +143,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.scheduler_task = scheduler_task
 
         logger.info(
-            "Phase 4 trading loop started — strategy scheduler running every %ss",
+            "Phase 5 trading loop started — strategy scheduler running every %ss",
             os.environ.get("STRATEGY_INTERVAL_SECONDS", "60"),
         )
 
