@@ -74,6 +74,7 @@ def test_buy_signal_when_oversold():
     assert signal.strength == Decimal("1")
     assert signal.symbol == "AAPL"
     assert signal.strategy_id == "rsi-test"
+    assert signal.reference_price == bars[-1].close
 
 
 # ── overbought: sell signal ───────────────────────────────────────────────────
@@ -91,6 +92,7 @@ def test_sell_signal_when_overbought():
 
     assert signal is not None
     assert signal.strength == Decimal("-1")
+    assert signal.reference_price == bars[-1].close
 
 
 # ── midrange: no signal ───────────────────────────────────────────────────────

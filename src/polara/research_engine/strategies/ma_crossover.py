@@ -64,4 +64,5 @@ class MACrossoverStrategy(Strategy):
             symbol=self.symbol,
             strength=strength,
             generated_at=datetime.now(UTC),
+            reference_price=bars[-1].close,
         )

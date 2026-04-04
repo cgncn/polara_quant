@@ -127,6 +127,7 @@ def test_ma_crossover_buy_signal_on_fast_crosses_above():
     assert signal.strength == Decimal("1")
     assert signal.symbol == "AAPL"
     assert signal.strategy_id == "test-ma"
+    assert signal.reference_price == bars[-1].close
 
 
 def test_ma_crossover_sell_signal_on_fast_crosses_below():
@@ -142,6 +143,7 @@ def test_ma_crossover_sell_signal_on_fast_crosses_below():
     signal = strategy.on_bars(bars)
     assert signal is not None
     assert signal.strength == Decimal("-1")
+    assert signal.reference_price == bars[-1].close
 
 
 def test_ma_crossover_no_signal_when_no_crossover():
