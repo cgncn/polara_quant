@@ -31,6 +31,18 @@ async def _get_tables(db_url: str) -> list[str]:
     return tables
 
 
+async def _get_columns(db_url: str, table: str) -> list[str]:
+    engine = create_async_engine(db_url)
+    async with engine.begin() as conn:
+        cols = await conn.run_sync(
+            lambda sync_conn: [
+                c["name"] for c in inspect(sync_conn).get_columns(table)
+            ]
+        )
+    await engine.dispose()
+    return cols
+
+
 def test_upgrade_creates_expected_tables() -> None:
     original = os.environ.get("DATABASE_URL")
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -235,6 +247,61 @@ def test_strategies_status_accepts_live_after_migration() -> None:
         command.upgrade(cfg, "head")
         # Should not raise
         _asyncio.run(_insert_live(f"sqlite+aiosqlite:///{db_path}"))
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_0005_bracket_orders_table_created() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "bracket_orders" in tables
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_0005_signal_orders_has_stop_price_column() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        cols = asyncio.run(
+            _get_columns(f"sqlite+aiosqlite:///{db_path}", "signal_orders")
+        )
+        assert "stop_price" in cols
+        assert "take_profit_price" in cols
+    finally:
+        os.unlink(db_path)
+        if original is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original
+
+
+def test_0005_downgrade_removes_bracket_orders() -> None:
+    original = os.environ.get("DATABASE_URL")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0004")
+        tables = asyncio.run(_get_tables(f"sqlite+aiosqlite:///{db_path}"))
+        assert "bracket_orders" not in tables
     finally:
         os.unlink(db_path)
         if original is None:
