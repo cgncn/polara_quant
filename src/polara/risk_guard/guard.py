@@ -26,6 +26,11 @@ class RiskGuard:
         self._halted: bool = False
         self._halt_date: date | None = None
 
+    @property
+    def max_position_pct(self) -> Decimal:
+        """Return the maximum position size as a percentage (e.g. 10 for 10%)."""
+        return self._max_position * Decimal("100")
+
     def _reset_if_new_day(self) -> None:
         if self._halted and self._halt_date is not None:
             today = datetime.now(UTC).date()

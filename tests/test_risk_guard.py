@@ -98,3 +98,8 @@ def test_risk_violation_error_is_exception():
     err = RiskViolationError("test message")
     assert isinstance(err, Exception)
     assert str(err) == "test message"
+
+
+def test_max_position_pct_property_exposed():
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    assert guard.max_position_pct == Decimal("10")
