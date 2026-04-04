@@ -236,6 +236,41 @@ def test_signal_rejects_float_strength() -> None:
         )
 
 
+def test_signal_reference_price_defaults_to_none():
+    sig = Signal(
+        signal_id=uuid4(),
+        strategy_id="s1",
+        symbol="AAPL",
+        strength=Decimal("0.5"),
+        generated_at=datetime.now(UTC),
+    )
+    assert sig.reference_price is None
+
+
+def test_signal_reference_price_accepts_decimal():
+    sig = Signal(
+        signal_id=uuid4(),
+        strategy_id="s1",
+        symbol="AAPL",
+        strength=Decimal("0.5"),
+        generated_at=datetime.now(UTC),
+        reference_price=Decimal("150.00"),
+    )
+    assert sig.reference_price == Decimal("150.00")
+
+
+def test_signal_reference_price_rejects_float():
+    with pytest.raises(ValidationError):
+        Signal(
+            signal_id=uuid4(),
+            strategy_id="s1",
+            symbol="AAPL",
+            strength=Decimal("0.5"),
+            generated_at=datetime.now(UTC),
+            reference_price=150.0,
+        )
+
+
 # ── TargetPosition ────────────────────────────────────────────────────────────
 
 def test_target_position_rejects_weight_above_1() -> None:

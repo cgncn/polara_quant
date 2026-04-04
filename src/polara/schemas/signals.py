@@ -18,6 +18,14 @@ class Signal(BaseModel):
     symbol: str
     strength: Decimal
     generated_at: datetime
+    reference_price: Decimal | None = None
+
+    @field_validator("reference_price", mode="before")
+    @classmethod
+    def reject_float_price(cls, v: object) -> object:
+        if isinstance(v, float):
+            raise ValueError("reference_price must be Decimal, not float")
+        return v
 
     @field_validator("generated_at", mode="after")
     @classmethod
