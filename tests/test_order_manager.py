@@ -402,3 +402,175 @@ async def test_dynamic_sizing_uses_floor_not_round():
 
     req = adapter.place_order.call_args[0][0]
     assert req.quantity == Decimal("204")
+
+
+def make_position(symbol: str, quantity: Decimal) -> Position:
+    return Position(
+        symbol=symbol,
+        quantity=quantity,
+        avg_cost=Decimal("50"),
+        unrealised_pnl=Decimal("0"),
+        updated_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Delta sizing and pending tracker tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_delta_sizing_no_pending_no_position():
+    """First signal, no position held, nothing in-flight → orders full target qty."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    req = adapter.place_order.call_args[0][0]
+    assert req.quantity == Decimal("200")  # floor(100000*10%*1/50)
+
+
+@pytest.mark.asyncio
+async def test_delta_sizing_with_pending():
+    """100 shares in-flight → orders only delta (200 - 100 = 100)."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    manager._pending["AAPL"] = Decimal("100")
+
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    req = adapter.place_order.call_args[0][0]
+    assert req.quantity == Decimal("100")
+
+
+@pytest.mark.asyncio
+async def test_delta_sizing_with_held_position():
+    """150 shares already held → orders only delta (200 - 150 = 50)."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[make_position("AAPL", Decimal("150"))],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    req = adapter.place_order.call_args[0][0]
+    assert req.quantity == Decimal("50")
+
+
+@pytest.mark.asyncio
+async def test_delta_sizing_already_at_target_skips_signal():
+    """held(200) + pending(0) >= target(200) → delta=0 → signal skipped."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[make_position("AAPL", Decimal("200"))],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    result = await manager.process_signal(signal)
+
+    assert result is None
+    adapter.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pending_reconciliation_clears_on_fill():
+    """Once positions show held >= pending, the pending entry is cleared."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[make_position("AAPL", Decimal("200"))],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    manager._pending["AAPL"] = Decimal("200")
+
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    assert "AAPL" not in manager._pending
+
+
+@pytest.mark.asyncio
+async def test_pending_reconciliation_partial_fill():
+    """If held (100) < pending (200), do NOT clear the pending entry."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[make_position("AAPL", Decimal("100"))],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    manager._pending["AAPL"] = Decimal("200")
+
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    assert "AAPL" in manager._pending
+    assert manager._pending["AAPL"] == Decimal("200")
+
+
+@pytest.mark.asyncio
+async def test_pending_incremented_after_order():
+    """After submitting a delta order, _pending[symbol] is incremented by delta."""
+    adapter = make_mock_adapter(
+        account=make_account_with_nav(Decimal("100000")),
+        positions=[],
+    )
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    assert manager._pending.get("AAPL") == Decimal("200")

@@ -39,6 +39,7 @@ class OrderManager:
         self._db = db_session_factory
         self._status_service = status_service
         self._min_order_quantity = min_order_quantity
+        self._pending: dict[str, Decimal] = {}
 
     def _compute_quantity(self, signal: Signal, account) -> Decimal | None:
         """Compute order quantity from signal strength and account NAV.
@@ -73,6 +74,29 @@ class OrderManager:
 
         return quantity
 
+    def _reconcile_pending(self, positions: list) -> None:
+        """Clear pending entries for symbols where held quantity >= pending quantity.
+
+        Call after fetching live positions to remove entries for filled orders.
+        """
+        held_by_symbol = {p.symbol: p.quantity for p in positions}
+        for symbol in list(self._pending):
+            held = held_by_symbol.get(symbol, Decimal("0"))
+            if held >= self._pending[symbol]:
+                del self._pending[symbol]
+
+    def _compute_delta(
+        self, symbol: str, quantity_target: Decimal, positions: list
+    ) -> Decimal:
+        """Compute quantity still needed to reach target, accounting for in-flight orders.
+
+        delta = max(0, target - held - in_flight)
+        """
+        held_by_symbol = {p.symbol: p.quantity for p in positions}
+        current_held = held_by_symbol.get(symbol, Decimal("0"))
+        in_flight = self._pending.get(symbol, Decimal("0"))
+        return max(Decimal("0"), quantity_target - current_held - in_flight)
+
     async def process_signal(self, signal: Signal) -> OrderStatus | None:
         """Run risk checks and submit order.
 
@@ -90,14 +114,23 @@ class OrderManager:
         try:
             account = await self._adapter.get_account()
             positions = await self._adapter.get_positions()
+            self._reconcile_pending(positions)
             self._risk_guard.check_daily_loss(account)
             self._risk_guard.check_position_size(signal, positions, account)
         except RiskViolationError as e:
             logger.warning("Risk violation for signal %s: %s", signal.signal_id, e)
             return None
 
-        quantity = self._compute_quantity(signal, account)
-        if quantity is None:
+        quantity_target = self._compute_quantity(signal, account)
+        if quantity_target is None:
+            return None
+
+        delta = self._compute_delta(signal.symbol, quantity_target, positions)
+        if delta < self._min_order_quantity:
+            logger.info(
+                "Delta %s for %s is below minimum %s — skipping signal",
+                delta, signal.symbol, self._min_order_quantity,
+            )
             return None
 
         side = "buy" if signal.strength > Decimal(0) else "sell"
@@ -105,7 +138,7 @@ class OrderManager:
             order_id=uuid4(),
             symbol=signal.symbol,
             side=side,
-            quantity=quantity,
+            quantity=delta,
             limit_price=None,
             requested_at=datetime.now(UTC),
             strategy_id=signal.strategy_id,
@@ -127,4 +160,7 @@ class OrderManager:
             )
             await db.commit()
 
+        self._pending[signal.symbol] = (
+            self._pending.get(signal.symbol, Decimal("0")) + delta
+        )
         return order_status
