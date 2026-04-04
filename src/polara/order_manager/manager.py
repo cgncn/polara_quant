@@ -1,7 +1,7 @@
 """OrderManager — links signals to order submissions via RiskGuard + BrokerAdapter."""
 import logging
 from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -18,8 +18,10 @@ logger = logging.getLogger(__name__)
 
 _INSERT_SIGNAL_ORDER = text(
     "INSERT INTO signal_orders"
-    " (id, signal_id, order_id, strategy_id, symbol, signal_strength, created_at)"
-    " VALUES (:id, :signal_id, :order_id, :strategy_id, :symbol, :signal_strength, :created_at)"
+    " (id, signal_id, order_id, strategy_id, symbol, signal_strength,"
+    "  stop_price, take_profit_price, created_at)"
+    " VALUES (:id, :signal_id, :order_id, :strategy_id, :symbol, :signal_strength,"
+    "  :stop_price, :take_profit_price, :created_at)"
 )
 
 
@@ -97,6 +99,46 @@ class OrderManager:
         in_flight = self._pending.get(symbol, Decimal("0"))
         return max(Decimal("0"), quantity_target - current_held - in_flight)
 
+    def _compute_exit_prices(
+        self, signal: Signal, side: str
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """Convert percentage stop/take-profit params to absolute prices.
+
+        For buys:  stop  = price × (1 - pct/100), rounded down to nearest cent
+                   tp    = price × (1 + pct/100), rounded up to nearest cent
+        For sells: stop  = price × (1 + pct/100), rounded up   (stop above entry)
+                   tp    = price × (1 - pct/100), rounded down (profit below entry)
+
+        Returns (None, None) if reference_price is not set on the signal.
+        """
+        if signal.reference_price is None:
+            return None, None
+
+        price = signal.reference_price
+        stop: Decimal | None = None
+        take_profit: Decimal | None = None
+
+        if side == "buy":
+            if signal.stop_loss_pct:
+                stop = (price * (1 - signal.stop_loss_pct / Decimal("100"))).quantize(
+                    Decimal("0.01"), rounding=ROUND_DOWN
+                )
+            if signal.take_profit_pct:
+                take_profit = (
+                    price * (1 + signal.take_profit_pct / Decimal("100"))
+                ).quantize(Decimal("0.01"), rounding=ROUND_UP)
+        else:  # sell / short
+            if signal.stop_loss_pct:
+                stop = (price * (1 + signal.stop_loss_pct / Decimal("100"))).quantize(
+                    Decimal("0.01"), rounding=ROUND_UP
+                )
+            if signal.take_profit_pct:
+                take_profit = (
+                    price * (1 - signal.take_profit_pct / Decimal("100"))
+                ).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+
+        return stop, take_profit
+
     async def process_signal(self, signal: Signal) -> OrderStatus | None:
         """Run risk checks and submit order.
 
@@ -134,6 +176,8 @@ class OrderManager:
             return None
 
         side = "buy" if signal.strength > Decimal(0) else "sell"
+        stop_price, take_profit_price = self._compute_exit_prices(signal, side)
+
         req = OrderRequest(
             order_id=uuid4(),
             symbol=signal.symbol,
@@ -145,7 +189,12 @@ class OrderManager:
         )
 
         async with self._db() as db:
-            order_status = await self._adapter.place_order(req, db)
+            if stop_price is not None or take_profit_price is not None:
+                order_status = await self._adapter.place_bracket_order(
+                    req, stop_price, take_profit_price, db
+                )
+            else:
+                order_status = await self._adapter.place_order(req, db)
             await db.execute(
                 _INSERT_SIGNAL_ORDER,
                 {
@@ -155,6 +204,10 @@ class OrderManager:
                     "strategy_id": signal.strategy_id,
                     "symbol": signal.symbol,
                     "signal_strength": str(signal.strength),
+                    "stop_price": str(stop_price) if stop_price is not None else None,
+                    "take_profit_price": (
+                        str(take_profit_price) if take_profit_price is not None else None
+                    ),
                     "created_at": datetime.now(UTC).isoformat(),
                 },
             )

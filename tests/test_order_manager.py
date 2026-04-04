@@ -574,3 +574,108 @@ async def test_pending_incremented_after_order():
     await manager.process_signal(signal)
 
     assert manager._pending.get("AAPL") == Decimal("200")
+
+
+# ---------------------------------------------------------------------------
+# Bracket routing tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_bracket_order_submitted_when_stop_loss_set():
+    """Signal with stop_loss_pct → place_bracket_order called, not place_order."""
+    adapter = make_mock_adapter(account=make_account_with_nav(Decimal("100000")))
+    adapter.place_bracket_order = AsyncMock(return_value=make_order_status())
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = Signal(
+        signal_id=uuid4(),
+        strategy_id="test-strategy",
+        symbol="AAPL",
+        strength=Decimal("1"),
+        generated_at=datetime.now(UTC),
+        reference_price=Decimal("50"),
+        stop_loss_pct=Decimal("5"),
+    )
+    await manager.process_signal(signal)
+
+    adapter.place_bracket_order.assert_called_once()
+    adapter.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bracket_order_submitted_when_take_profit_set():
+    """Signal with take_profit_pct → place_bracket_order called."""
+    adapter = make_mock_adapter(account=make_account_with_nav(Decimal("100000")))
+    adapter.place_bracket_order = AsyncMock(return_value=make_order_status())
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = Signal(
+        signal_id=uuid4(),
+        strategy_id="test-strategy",
+        symbol="AAPL",
+        strength=Decimal("1"),
+        generated_at=datetime.now(UTC),
+        reference_price=Decimal("50"),
+        take_profit_pct=Decimal("10"),
+    )
+    await manager.process_signal(signal)
+
+    adapter.place_bracket_order.assert_called_once()
+    adapter.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_plain_order_when_no_exit_params():
+    """Signal with no stop/take-profit → plain place_order called (no regression)."""
+    adapter = make_mock_adapter(account=make_account_with_nav(Decimal("100000")))
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = make_signal_with_price(strength="1", reference_price=Decimal("50"))
+    await manager.process_signal(signal)
+
+    adapter.place_order.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_pending_incremented_after_bracket_order():
+    """After bracket order, _pending[symbol] reflects the submitted delta."""
+    adapter = make_mock_adapter(account=make_account_with_nav(Decimal("100000")))
+    adapter.place_bracket_order = AsyncMock(return_value=make_order_status())
+    guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
+    db_factory, _ = make_mock_db_session()
+    manager = OrderManager(
+        broker_adapter=adapter,
+        risk_guard=guard,
+        db_session_factory=db_factory,
+        status_service=make_mock_status_service("live"),
+    )
+    signal = Signal(
+        signal_id=uuid4(),
+        strategy_id="test-strategy",
+        symbol="AAPL",
+        strength=Decimal("1"),
+        generated_at=datetime.now(UTC),
+        reference_price=Decimal("50"),
+        stop_loss_pct=Decimal("5"),
+    )
+    await manager.process_signal(signal)
+
+    assert manager._pending.get("AAPL") == Decimal("200")
