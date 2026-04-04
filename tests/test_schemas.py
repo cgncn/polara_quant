@@ -271,6 +271,76 @@ def test_signal_reference_price_rejects_float():
         )
 
 
+def test_signal_stop_loss_pct_defaults_to_none() -> None:
+    sig = Signal(
+        signal_id=uuid4(),
+        strategy_id="s1",
+        symbol="AAPL",
+        strength=Decimal("0.5"),
+        generated_at=datetime.now(UTC),
+    )
+    assert sig.stop_loss_pct is None
+
+
+def test_signal_take_profit_pct_defaults_to_none() -> None:
+    sig = Signal(
+        signal_id=uuid4(),
+        strategy_id="s1",
+        symbol="AAPL",
+        strength=Decimal("0.5"),
+        generated_at=datetime.now(UTC),
+    )
+    assert sig.take_profit_pct is None
+
+
+def test_signal_stop_loss_pct_accepts_decimal() -> None:
+    sig = Signal(
+        signal_id=uuid4(),
+        strategy_id="s1",
+        symbol="AAPL",
+        strength=Decimal("0.5"),
+        generated_at=datetime.now(UTC),
+        stop_loss_pct=Decimal("5"),
+    )
+    assert sig.stop_loss_pct == Decimal("5")
+
+
+def test_signal_take_profit_pct_accepts_decimal() -> None:
+    sig = Signal(
+        signal_id=uuid4(),
+        strategy_id="s1",
+        symbol="AAPL",
+        strength=Decimal("0.5"),
+        generated_at=datetime.now(UTC),
+        take_profit_pct=Decimal("10"),
+    )
+    assert sig.take_profit_pct == Decimal("10")
+
+
+def test_signal_stop_loss_pct_rejects_float() -> None:
+    with pytest.raises(ValidationError):
+        Signal(
+            signal_id=uuid4(),
+            strategy_id="s1",
+            symbol="AAPL",
+            strength=Decimal("0.5"),
+            generated_at=datetime.now(UTC),
+            stop_loss_pct=5.0,
+        )
+
+
+def test_signal_take_profit_pct_rejects_float() -> None:
+    with pytest.raises(ValidationError):
+        Signal(
+            signal_id=uuid4(),
+            strategy_id="s1",
+            symbol="AAPL",
+            strength=Decimal("0.5"),
+            generated_at=datetime.now(UTC),
+            take_profit_pct=10.0,
+        )
+
+
 # ── TargetPosition ────────────────────────────────────────────────────────────
 
 def test_target_position_rejects_weight_above_1() -> None:

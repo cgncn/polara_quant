@@ -19,12 +19,21 @@ class Signal(BaseModel):
     strength: Decimal
     generated_at: datetime
     reference_price: Decimal | None = None
+    stop_loss_pct: Decimal | None = None
+    take_profit_pct: Decimal | None = None
 
     @field_validator("reference_price", mode="before")
     @classmethod
     def reject_float_price(cls, v: object) -> object:
         if isinstance(v, float):
             raise ValueError("reference_price must be Decimal, not float")
+        return v
+
+    @field_validator("stop_loss_pct", "take_profit_pct", mode="before")
+    @classmethod
+    def reject_float_pct(cls, v: object) -> object:
+        if isinstance(v, float):
+            raise ValueError("stop_loss_pct and take_profit_pct must be Decimal, not float")
         return v
 
     @field_validator("generated_at", mode="after")
