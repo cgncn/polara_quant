@@ -1,7 +1,7 @@
 """OrderManager — links signals to order submissions via RiskGuard + BrokerAdapter."""
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -32,11 +32,46 @@ class OrderManager:
         risk_guard: RiskGuard,
         db_session_factory,
         status_service: StrategyStatusService,
+        min_order_quantity: Decimal = Decimal("1"),
     ) -> None:
         self._adapter = broker_adapter
         self._risk_guard = risk_guard
         self._db = db_session_factory
         self._status_service = status_service
+        self._min_order_quantity = min_order_quantity
+
+    def _compute_quantity(self, signal: Signal, account) -> Decimal | None:
+        """Compute order quantity from signal strength and account NAV.
+
+        Returns None if computed quantity is below minimum (signal should be skipped).
+        Falls back to quantity=1 if signal has no reference_price.
+        """
+        if signal.reference_price and signal.reference_price > Decimal(0):
+            target_notional = (
+                account.net_liquidation
+                * (self._risk_guard.max_position_pct / Decimal("100"))
+                * abs(signal.strength)
+            )
+            quantity = (target_notional / signal.reference_price).to_integral_value(
+                rounding=ROUND_DOWN
+            )
+        else:
+            logger.warning(
+                "Signal for %s has no reference_price — falling back to quantity=1",
+                signal.symbol,
+            )
+            quantity = Decimal("1")
+
+        if quantity < self._min_order_quantity:
+            logger.info(
+                "Computed quantity %s for %s is below minimum %s — skipping signal",
+                quantity,
+                signal.symbol,
+                self._min_order_quantity,
+            )
+            return None
+
+        return quantity
 
     async def process_signal(self, signal: Signal) -> OrderStatus | None:
         """Run risk checks and submit order.
@@ -61,12 +96,16 @@ class OrderManager:
             logger.warning("Risk violation for signal %s: %s", signal.signal_id, e)
             return None
 
+        quantity = self._compute_quantity(signal, account)
+        if quantity is None:
+            return None
+
         side = "buy" if signal.strength > Decimal(0) else "sell"
         req = OrderRequest(
             order_id=uuid4(),
             symbol=signal.symbol,
             side=side,
-            quantity=Decimal("1"),
+            quantity=quantity,
             limit_price=None,
             requested_at=datetime.now(UTC),
             strategy_id=signal.strategy_id,
