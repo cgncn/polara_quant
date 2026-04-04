@@ -231,3 +231,109 @@ async def test_cancel_order_terminal_status_raises():
     adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     with pytest.raises(ValueError, match="Cannot cancel"):
         await adapter.cancel_order("some-id", db=mock_db)
+
+
+# ── place_bracket_order ───────────────────────────────────────────────────────
+
+"""Tests for BrokerAdapter.place_bracket_order."""
+
+
+def make_bracket_order_req(side: str = "buy") -> OrderRequest:
+    return OrderRequest(
+        order_id=uuid4(),
+        symbol="AAPL",
+        side=side,
+        quantity=Decimal("100"),
+        limit_price=None,
+        requested_at=datetime.now(UTC),
+        strategy_id="test-strategy",
+    )
+
+
+def make_bracket_adapter():
+    client = MagicMock()
+    client.connected = True
+    client.ib.client.getReqId.return_value = 42
+
+    def _place_order_side_effect(contract, order):
+        trade = MagicMock()
+        trade.order.orderId = order.orderId if hasattr(order, "orderId") and order.orderId else 99
+        return trade
+
+    client.ib.placeOrder.side_effect = _place_order_side_effect
+
+    db_factory = MagicMock()
+    db_session = AsyncMock()
+    db_session.execute = AsyncMock()
+    db_session.commit = AsyncMock()
+    db_session.__aenter__ = AsyncMock(return_value=db_session)
+    db_session.__aexit__ = AsyncMock(return_value=None)
+
+    return BrokerAdapter(ib_client=client, db_session_factory=db_factory), client, db_session
+
+
+@pytest.mark.asyncio
+async def test_place_bracket_order_submits_three_ib_orders():
+    adapter, client, db = make_bracket_adapter()
+    req = make_bracket_order_req("buy")
+    await adapter.place_bracket_order(
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
+    )
+    assert client.ib.placeOrder.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_bracket_parent_transmit_false():
+    adapter, client, db = make_bracket_adapter()
+    req = make_bracket_order_req("buy")
+    await adapter.place_bracket_order(
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
+    )
+    parent_order = client.ib.placeOrder.call_args_list[0][0][1]
+    assert parent_order.transmit is False
+
+
+@pytest.mark.asyncio
+async def test_bracket_last_child_transmit_true():
+    adapter, client, db = make_bracket_adapter()
+    req = make_bracket_order_req("buy")
+    await adapter.place_bracket_order(
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
+    )
+    last_order = client.ib.placeOrder.call_args_list[2][0][1]
+    assert last_order.transmit is True
+
+
+@pytest.mark.asyncio
+async def test_bracket_children_have_correct_parent_id():
+    adapter, client, db = make_bracket_adapter()
+    req = make_bracket_order_req("buy")
+    await adapter.place_bracket_order(
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
+    )
+    stop_order = client.ib.placeOrder.call_args_list[1][0][1]
+    tp_order = client.ib.placeOrder.call_args_list[2][0][1]
+    assert stop_order.parentId == 42
+    assert tp_order.parentId == 42
+
+
+@pytest.mark.asyncio
+async def test_bracket_stop_is_sell_for_buy_parent():
+    adapter, client, db = make_bracket_adapter()
+    req = make_bracket_order_req("buy")
+    await adapter.place_bracket_order(
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
+    )
+    stop_order = client.ib.placeOrder.call_args_list[1][0][1]
+    assert stop_order.action == "SELL"
+
+
+@pytest.mark.asyncio
+async def test_bracket_stop_is_buy_for_sell_parent():
+    adapter, client, db = make_bracket_adapter()
+    req = make_bracket_order_req("sell")
+    await adapter.place_bracket_order(
+        req, stop_price=Decimal("105.00"), take_profit_price=Decimal("90.00"), db=db
+    )
+    stop_order = client.ib.placeOrder.call_args_list[1][0][1]
+    assert stop_order.action == "BUY"

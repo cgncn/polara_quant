@@ -45,6 +45,14 @@ _INSERT_PNL_SNAPSHOT = text("""
         (:id, :net_liquidation, :cash, :unrealised_pnl, :realised_pnl, :snapshot_at)
 """)
 
+_INSERT_BRACKET_ORDER = text("""
+    INSERT INTO bracket_orders
+        (id, order_id, stop_ib_id, take_profit_ib_id, stop_price, take_profit_price, created_at)
+    VALUES
+        (:id, :order_id, :stop_ib_id, :take_profit_ib_id,
+         :stop_price, :take_profit_price, :created_at)
+""")
+
 # PostgreSQL 9.5+ and SQLite 3.24+ portable upsert syntax — not SQLite-specific.
 _UPSERT_POSITION = text("""
     INSERT INTO positions (id, symbol, quantity, avg_cost, unrealised_pnl, updated_at)
@@ -184,6 +192,101 @@ class BrokerAdapter:
         )
         await db.commit()
         logger.info("Order %s submitted (ib_order_id=%s)", req.order_id, ib_order_id)
+        return str(req.order_id)
+
+    async def place_bracket_order(
+        self,
+        req: OrderRequest,
+        stop_price: Decimal | None,
+        take_profit_price: Decimal | None,
+        db: AsyncSession,
+    ) -> str:
+        """Submit a bracket order (parent market + stop child + take-profit child).
+
+        IB requires transmit=False on all orders except the last child, which uses
+        transmit=True to atomically submit the entire bracket.
+        Returns the parent order_id as a string.
+        """
+        self._require_connected()
+        from ib_async import LimitOrder, MarketOrder, Stock, StopOrder  # noqa: PLC0415
+
+        contract = Stock(req.symbol, "SMART", "USD")
+        action = req.side.upper()
+        opposite = "SELL" if action == "BUY" else "BUY"
+        qty = float(req.quantity)
+
+        # Reserve parent order ID before creating children (they need parentId set).
+        parent_id = self._client.ib.client.getReqId()
+
+        parent = MarketOrder(action, qty, transmit=False)
+        parent.orderId = parent_id
+
+        # Build child orders; last one gets transmit=True.
+        children: list[object] = []
+        if stop_price is not None:
+            stop = StopOrder(
+                opposite, qty, float(stop_price), parentId=parent_id, transmit=False
+            )
+            children.append(stop)
+        if take_profit_price is not None:
+            tp = LimitOrder(
+                opposite, qty, float(take_profit_price), parentId=parent_id, transmit=False
+            )
+            children.append(tp)
+
+        if children:
+            children[-1].transmit = True  # type: ignore[attr-defined]
+        else:
+            parent.transmit = True  # no children — transmit parent immediately
+
+        parent_trade = self._client.ib.placeOrder(contract, parent)
+        ib_order_id: int | None = parent_trade.order.orderId if parent_trade else None
+
+        stop_ib_id: int | None = None
+        tp_ib_id: int | None = None
+        for i, child in enumerate(children):
+            child_trade = self._client.ib.placeOrder(contract, child)
+            child_ib_id = child_trade.order.orderId if child_trade else None
+            if stop_price is not None and i == 0:
+                stop_ib_id = child_ib_id
+            else:
+                tp_ib_id = child_ib_id
+
+        now = datetime.now(UTC)
+        await db.execute(
+            _INSERT_ORDER,
+            {
+                "id": str(uuid.uuid4()),
+                "order_id": str(req.order_id),
+                "symbol": req.symbol,
+                "side": req.side,
+                "quantity": str(req.quantity),
+                "limit_price": None,
+                "status": "submitted",
+                "ib_order_id": ib_order_id,
+                "strategy_id": req.strategy_id,
+                "submitted_at": now.isoformat(),
+            },
+        )
+        await db.execute(
+            _INSERT_BRACKET_ORDER,
+            {
+                "id": str(uuid.uuid4()),
+                "order_id": str(req.order_id),
+                "stop_ib_id": stop_ib_id,
+                "take_profit_ib_id": tp_ib_id,
+                "stop_price": str(stop_price) if stop_price is not None else None,
+                "take_profit_price": (
+                    str(take_profit_price) if take_profit_price is not None else None
+                ),
+                "created_at": now.isoformat(),
+            },
+        )
+        await db.commit()
+        logger.info(
+            "Bracket order %s submitted (parent_ib_id=%s, stop=%s, tp=%s)",
+            req.order_id, ib_order_id, stop_price, take_profit_price,
+        )
         return str(req.order_id)
 
     async def cancel_order(self, order_id: str, db: AsyncSession) -> OrderStatus:
