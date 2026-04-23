@@ -11,7 +11,7 @@ services:
     ports:
       - "4003:4003"
     volumes:
-      - ./data/jts:/home/ibgateway/Jts
+      - ib-jts:/home/ibgateway/Jts
 
   polara-api:
     build:
@@ -61,3 +61,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+volumes:
+  ib-jts:
