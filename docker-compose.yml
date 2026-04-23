@@ -36,6 +36,22 @@ services:
       - MA_SLOW_PERIOD=50
       - MA_QUANTITY=1
       - MA_BAR_SIZE=5 mins
+      # Phase 6 — MA bracket order percentages
+      - MA_STOP_LOSS_PCT=5
+      - MA_TAKE_PROFIT_PCT=10
+      # Phase 5
+      - MIN_ORDER_QUANTITY=1
+      # RSI strategy
+      - RSI_STRATEGY_ID=rsi-mean-reversion-aapl
+      - RSI_STRATEGY_SYMBOL=AAPL
+      - RSI_PERIOD=14
+      - RSI_OVERSOLD=30
+      - RSI_OVERBOUGHT=70
+      - RSI_QUANTITY=1
+      - RSI_BAR_SIZE=5 mins
+      # Phase 6 — RSI bracket order percentages
+      - RSI_STOP_LOSS_PCT=5
+      - RSI_TAKE_PROFIT_PCT=10
     depends_on:
       - ib-gateway
     restart: unless-stopped
