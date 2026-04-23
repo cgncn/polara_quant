@@ -8,6 +8,7 @@ services:
       - TRADING_MODE=paper
       - TWS_SETTINGS_PATH=/home/ibgateway/Jts
       - TWOFA_TIMEOUT_ACTION=restart
+      - TRUSTED_IPS=
     ports:
       - "4003:4003"
     volumes:
