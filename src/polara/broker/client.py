@@ -47,11 +47,16 @@ class IBClient:
         return self._ib
 
     async def connect(self) -> None:
-        """Attempt initial connection. Logs warning and returns if unreachable."""
+        """Attempt initial connection; start reconnect loop if gateway not yet ready."""
         self._shutdown = False
         if self._ib.isConnected():
             return
         await self._try_connect()
+        if not self._ib.isConnected():
+            # Gateway not ready yet (still booting). Start the reconnect loop so
+            # we keep retrying — same path used when a live connection drops.
+            logger.info("IBClient initial connect failed — starting reconnect loop")
+            self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def disconnect(self) -> None:
         """Clean shutdown — cancels reconnect task then disconnects."""
