@@ -26,7 +26,7 @@ services:
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/polara.db
       - IB_HOST=ib-gateway
-      - IB_PORT=4002
+      - IB_PORT=4004
       - IB_CLIENT_ID=1
       - MARKET_DATA_DB_PATH=data/market_data.duckdb
       - STRATEGY_INTERVAL_SECONDS=60
