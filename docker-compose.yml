@@ -34,8 +34,8 @@ services:
       - RISK_MAX_DAILY_LOSS_PCT=5
       - MA_STRATEGY_ID=ma-crossover-aapl
       - MA_STRATEGY_SYMBOL=AAPL
-      - MA_FAST_PERIOD=10
-      - MA_SLOW_PERIOD=50
+      - MA_FAST_PERIOD=3
+      - MA_SLOW_PERIOD=10
       - MA_QUANTITY=1
       - MA_BAR_SIZE=5 mins
       # Phase 6 — MA bracket order percentages
