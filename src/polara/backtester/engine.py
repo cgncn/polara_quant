@@ -11,6 +11,17 @@ STARTING_CAPITAL = Decimal("10000")
 PASS_MIN_SHARPE = Decimal("0.5")
 PASS_MAX_DRAWDOWN_PCT = Decimal("20")
 
+# IBKR Fixed Rate commission schedule.
+# Per-order cost = max(COMMISSION_MIN, COMMISSION_PER_SHARE × shares).
+# The backtester trades 1 share per signal, so the minimum always applies.
+IBKR_COMMISSION_PER_SHARE = Decimal("0.005")
+IBKR_COMMISSION_MIN = Decimal("1.00")  # per order (one side)
+
+
+def _commission(shares: int = 1) -> Decimal:
+    """IBKR Fixed Rate commission for a single order (one side of a round trip)."""
+    return max(IBKR_COMMISSION_MIN, IBKR_COMMISSION_PER_SHARE * Decimal(shares))
+
 
 def _periods_per_year(bar_size: str) -> int:
     """Approximate number of bar periods in a trading year.
@@ -92,11 +103,13 @@ class Backtester:
         store: BarStore,
         min_sharpe: Decimal = PASS_MIN_SHARPE,
         max_drawdown_pct: Decimal = PASS_MAX_DRAWDOWN_PCT,
+        commission_per_side: Decimal = IBKR_COMMISSION_MIN,
     ) -> None:
         self._strategy = strategy
         self._store = store
         self._min_sharpe = min_sharpe
         self._max_drawdown_pct = max_drawdown_pct
+        self._commission_per_side = commission_per_side
 
     def run(self, *, symbol: str, bar_size: str, lookback_bars: int) -> BacktestResult:
         """Run the backtest and return a BacktestResult.
@@ -127,15 +140,17 @@ class Backtester:
 
             if signal is not None:
                 if signal.strength > Decimal("0") and position is None:
-                    # Enter long position
+                    # Enter long position — pay entry commission immediately.
+                    cash -= self._commission_per_side
                     position = {
                         "side": "buy",
                         "entry_price": fill_price,
                         "entry_idx": i + 1,
                     }
                 elif signal.strength < Decimal("0") and position is not None:
-                    # Exit long position
-                    pnl = fill_price - position["entry_price"]
+                    # Exit long position — pay exit commission; pnl is gross of commissions.
+                    gross_pnl = fill_price - position["entry_price"]
+                    net_pnl = gross_pnl - self._commission_per_side
                     trades.append(
                         BacktestTrade(
                             entry_bar_index=position["entry_idx"],
@@ -143,10 +158,10 @@ class Backtester:
                             side="buy",
                             entry_price=position["entry_price"],
                             exit_price=fill_price,
-                            pnl=pnl,
+                            pnl=net_pnl,  # net of both commissions
                         )
                     )
-                    cash += pnl
+                    cash += gross_pnl - self._commission_per_side
                     position = None
 
             # Mark-to-market equity at current bar close
@@ -159,7 +174,8 @@ class Backtester:
         # Close any remaining open position at the last bar's close
         if position is not None:
             last_price = bars[-1].close
-            pnl = last_price - position["entry_price"]
+            gross_pnl = last_price - position["entry_price"]
+            net_pnl = gross_pnl - self._commission_per_side
             trades.append(
                 BacktestTrade(
                     entry_bar_index=position["entry_idx"],
@@ -167,10 +183,10 @@ class Backtester:
                     side="buy",
                     entry_price=position["entry_price"],
                     exit_price=last_price,
-                    pnl=pnl,
+                    pnl=net_pnl,
                 )
             )
-            cash += pnl
+            cash += gross_pnl - self._commission_per_side
 
         equity_curve.append(cash)
 

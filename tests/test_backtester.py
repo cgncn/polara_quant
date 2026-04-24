@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from polara.backtester.engine import Backtester, STARTING_CAPITAL
+from polara.backtester.engine import Backtester, STARTING_CAPITAL, IBKR_COMMISSION_MIN
 from polara.backtester.schemas import BacktestResult
 from polara.schemas.market import Bar
 from polara.schemas.signals import Signal
@@ -94,10 +94,8 @@ def test_no_trades_baseline():
 def test_single_winning_trade():
     """Buy signal at bar-index 5, sell signal at bar-index 7.
 
-    Fill at open of bar[6] (=100) and bar[8] (=110) → pnl=10, win_rate=100%.
-    bars_needed=5, so first call_index = 5 (window = bars[0..5]).
-    fill bar = bars[6]; open price = 100 (entry).
-    Second call_index = 7; fill bar = bars[8]; open price = 110 (exit).
+    Fill at open of bar[6] (=100) and bar[8] (=110) → gross pnl=10, win_rate=100%.
+    commission_per_side=0 isolates trade mechanics from commission accounting.
     """
     prices = [Decimal("90")] * 6 + [Decimal("100")] + [Decimal("105")] + [Decimal("110")] + [Decimal("110")] * 11
     bars = [make_bar(close=prices[i], open_=prices[i], i=i) for i in range(20)]
@@ -114,21 +112,19 @@ def test_single_winning_trade():
         return None
 
     strategy = make_strategy(bars_needed=5, on_bars_side_effect=side_effect)
-    result = Backtester(strategy, make_mock_store(bars)).run(
-        symbol="AAPL", bar_size="5 mins", lookback_bars=20
-    )
+    result = Backtester(
+        strategy, make_mock_store(bars), commission_per_side=Decimal("0")
+    ).run(symbol="AAPL", bar_size="5 mins", lookback_bars=20)
 
     assert result.num_trades == 1
     assert result.win_rate_pct == Decimal("100")
-    trade = None
-    # We can't directly inspect trades from BacktestResult, but we can check pnl
-    # indirectly via total_return_pct (pnl=10 on STARTING_CAPITAL=10000 → 0.1%)
+    # pnl=10 on STARTING_CAPITAL=10000 → 0.1% (no commission)
     expected_return = Decimal("10") / STARTING_CAPITAL * Decimal("100")
     assert result.total_return_pct == expected_return
 
 
 def test_single_losing_trade():
-    """Buy at 100, sell at 90 → pnl=-10, win_rate=0%."""
+    """Buy at 100, sell at 90 → gross pnl=-10, win_rate=0%."""
     prices = [Decimal("100")] * 6 + [Decimal("100")] + [Decimal("95")] + [Decimal("90")] + [Decimal("90")] * 11
     bars = [make_bar(close=prices[i], open_=prices[i], i=i) for i in range(20)]
 
@@ -141,9 +137,9 @@ def test_single_losing_trade():
         return None
 
     strategy = make_strategy(bars_needed=5, on_bars_side_effect=side_effect)
-    result = Backtester(strategy, make_mock_store(bars)).run(
-        symbol="AAPL", bar_size="5 mins", lookback_bars=20
-    )
+    result = Backtester(
+        strategy, make_mock_store(bars), commission_per_side=Decimal("0")
+    ).run(symbol="AAPL", bar_size="5 mins", lookback_bars=20)
 
     assert result.num_trades == 1
     assert result.win_rate_pct == Decimal("0")
@@ -284,3 +280,74 @@ def test_max_drawdown_computed_correctly():
     dd = _compute_max_drawdown(equity)
     # Peak = 10000, trough = 8000 → drawdown = 20%
     assert dd == Decimal("20")
+
+
+def test_commission_deducted_from_pnl():
+    """IBKR commission ($1/side) must be deducted from trade PnL.
+
+    Buy at 100, sell at 110 → gross pnl = $10.
+    Commission: $1 entry + $1 exit = $2 round-trip.
+    Net pnl = $8 → total_return = 8/10000 * 100 = 0.08%.
+    Trade still counted as winning (net pnl > 0).
+    """
+    prices = (
+        [Decimal("90")] * 6
+        + [Decimal("100")]
+        + [Decimal("105")]
+        + [Decimal("110")]
+        + [Decimal("110")] * 11
+    )
+    bars = [make_bar(close=prices[i], open_=prices[i], i=i) for i in range(20)]
+
+    def side_effect(window):
+        idx = len(window) - 1
+        if idx == 5:
+            return make_signal("0.8")
+        if idx == 7:
+            return make_signal("-0.8")
+        return None
+
+    strategy = make_strategy(bars_needed=5, on_bars_side_effect=side_effect)
+    result = Backtester(
+        strategy, make_mock_store(bars), commission_per_side=IBKR_COMMISSION_MIN
+    ).run(symbol="AAPL", bar_size="5 mins", lookback_bars=20)
+
+    # Gross $10 − $2 commission = $8 net
+    net_pnl = Decimal("10") - IBKR_COMMISSION_MIN * 2
+    expected_return = net_pnl / STARTING_CAPITAL * Decimal("100")
+    assert result.total_return_pct == expected_return
+    assert result.num_trades == 1
+    assert result.win_rate_pct == Decimal("100")  # net pnl still positive
+
+
+def test_commission_can_turn_winner_into_loser():
+    """A small winning trade becomes a net loss after commission.
+
+    Buy at 100, sell at 101 → gross pnl = $1.
+    Round-trip commission = $2 → net pnl = -$1 → win_rate = 0%.
+    """
+    prices = (
+        [Decimal("100")] * 6
+        + [Decimal("100")]
+        + [Decimal("100")]
+        + [Decimal("101")]
+        + [Decimal("101")] * 11
+    )
+    bars = [make_bar(close=prices[i], open_=prices[i], i=i) for i in range(20)]
+
+    def side_effect(window):
+        idx = len(window) - 1
+        if idx == 5:
+            return make_signal("0.8")
+        if idx == 7:
+            return make_signal("-0.8")
+        return None
+
+    strategy = make_strategy(bars_needed=5, on_bars_side_effect=side_effect)
+    result = Backtester(
+        strategy, make_mock_store(bars), commission_per_side=IBKR_COMMISSION_MIN
+    ).run(symbol="AAPL", bar_size="5 mins", lookback_bars=20)
+
+    # Gross $1 − $2 commission = -$1
+    assert result.win_rate_pct == Decimal("0")  # net loss despite price gain
+    assert result.total_return_pct < Decimal("0")
