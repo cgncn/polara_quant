@@ -28,6 +28,9 @@ from polara.schemas.orders import Fill, OrderRequest
 logger = logging.getLogger(__name__)
 
 _PNL_SNAPSHOT_INTERVAL_SECONDS = 60
+# Avoid hitting IB's reqAccountSummary rate limit (Error 322).
+# NAV changes slowly; 5-minute cache is fresh enough for position sizing.
+_ACCOUNT_CACHE_TTL_SECONDS = 300
 
 _INSERT_ORDER = text("""
     INSERT INTO orders
@@ -80,6 +83,7 @@ class BrokerAdapter:
         self._client = ib_client
         self._db_factory = db_session_factory
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._account_cache: tuple[datetime, AccountInfo] | None = None
 
     # ── connection status ──────────────────────────────────────────────────────
 
@@ -101,7 +105,21 @@ class BrokerAdapter:
 
     # ── account ────────────────────────────────────────────────────────────────
 
-    async def get_account(self) -> AccountInfo:
+    async def get_account(self, *, force_refresh: bool = False) -> AccountInfo:
+        """Return account info, using a short-lived cache to avoid IB Error 322.
+
+        IB limits concurrent reqAccountSummary subscriptions per client ID.
+        The cache (TTL=5 min) is fresh enough for position sizing and risk checks.
+        Pass force_refresh=True to bypass the cache (e.g. for the PnL snapshot loop).
+        """
+        now = datetime.now(UTC)
+        if (
+            not force_refresh
+            and self._account_cache is not None
+            and (now - self._account_cache[0]).total_seconds() < _ACCOUNT_CACHE_TTL_SECONDS
+        ):
+            return self._account_cache[1]
+
         self._require_connected()
         summary = await self._client.ib.reqAccountSummaryAsync()
         values: dict[str, str] = {}
@@ -110,14 +128,16 @@ class BrokerAdapter:
             values[av.tag] = av.value
             if av.tag == "NetLiquidation":
                 currency = av.currency
-        return AccountInfo(
+        account = AccountInfo(
             net_liquidation=Decimal(values.get("NetLiquidation", "0")),
             cash=Decimal(values.get("TotalCashValue", "0")),
             unrealised_pnl=Decimal(values.get("UnrealizedPnL", "0")),
             realised_pnl=Decimal(values.get("RealizedPnL", "0")),
             currency=currency,
-            timestamp=datetime.now(UTC),
+            timestamp=now,
         )
+        self._account_cache = (now, account)
+        return account
 
     # ── positions ──────────────────────────────────────────────────────────────
 
@@ -396,17 +416,14 @@ class BrokerAdapter:
     # ── P&L ────────────────────────────────────────────────────────────────────
 
     async def get_pnl_snapshot(self) -> PnLSnapshot:
-        self._require_connected()
-        summary = await self._client.ib.reqAccountSummaryAsync()
-        values: dict[str, str] = {}
-        for av in summary:
-            values[av.tag] = av.value
+        """Fetch a fresh account snapshot, also refreshing the get_account cache."""
+        account = await self.get_account(force_refresh=True)
         return PnLSnapshot(
-            net_liquidation=Decimal(values.get("NetLiquidation", "0")),
-            cash=Decimal(values.get("TotalCashValue", "0")),
-            unrealised_pnl=Decimal(values.get("UnrealizedPnL", "0")),
-            realised_pnl=Decimal(values.get("RealizedPnL", "0")),
-            snapshot_at=datetime.now(UTC),
+            net_liquidation=account.net_liquidation,
+            cash=account.cash,
+            unrealised_pnl=account.unrealised_pnl,
+            realised_pnl=account.realised_pnl,
+            snapshot_at=account.timestamp,
         )
 
     async def pnl_snapshot_loop(self) -> None:

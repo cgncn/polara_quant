@@ -11,9 +11,10 @@ from polara.schemas.signals import Signal
 
 def make_bar(close: str = "170.00", ts_offset_minutes: int = 0) -> Bar:
     from datetime import timedelta
+    # Use now() so the scheduler's stale-bar guard (2h) never filters out test bars.
     return Bar(
         symbol="AAPL",
-        timestamp=datetime(2026, 4, 3, 10, 0, tzinfo=UTC) + timedelta(minutes=ts_offset_minutes * 5),
+        timestamp=datetime.now(UTC) + timedelta(minutes=ts_offset_minutes * 5),
         open=Decimal("170.00"),
         high=Decimal("171.00"),
         low=Decimal("169.50"),

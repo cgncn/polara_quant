@@ -10,6 +10,9 @@ services:
       - TWOFA_TIMEOUT_ACTION=restart
       - TRUSTED_IPS=
       - EXISTING_SESSION_DETECTED_ACTION=primary
+      # Graceful daily restart at 11:45 PM ET — before IBKR's 24h session timeout.
+      # IBC re-authenticates automatically using TWS_USERID/TWS_PASSWORD.
+      - AUTO_RESTART_TIME=23:45
     ports:
       - "4003:4003"
     volumes:
