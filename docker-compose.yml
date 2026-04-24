@@ -32,31 +32,35 @@ services:
       - IB_PORT=4004
       - IB_CLIENT_ID=1
       - MARKET_DATA_DB_PATH=data/market_data.duckdb
-      - STRATEGY_INTERVAL_SECONDS=60
+      - STRATEGY_INTERVAL_SECONDS=300
       - RISK_MAX_POSITION_PCT=10
       - RISK_MAX_DAILY_LOSS_PCT=5
-      - MA_STRATEGY_ID=ma-crossover-aapl
-      - MA_STRATEGY_SYMBOL=AAPL
-      - MA_FAST_PERIOD=3
-      - MA_SLOW_PERIOD=10
-      - MA_QUANTITY=1
-      - MA_BAR_SIZE=5 mins
-      # Phase 6 — MA bracket order percentages
-      - MA_STOP_LOSS_PCT=5
-      - MA_TAKE_PROFIT_PCT=10
-      # Phase 5
       - MIN_ORDER_QUANTITY=1
-      # RSI strategy
-      - RSI_STRATEGY_ID=rsi-mean-reversion-aapl
-      - RSI_STRATEGY_SYMBOL=AAPL
+
+      # ── MA Crossover ────────────────────────────────────────────────────────
+      # Symbols: volatile mid/large-caps with meaningful hourly moves.
+      # PLTR, COIN, SMCI, MSTR chosen for high beta and liquidity.
+      - MA_SYMBOLS=PLTR,COIN,SMCI,MSTR
+      # 1-hour bars: each bar captures a meaningful price move;
+      # fast=5h (~half a day), slow=20h (~2.5 days) filters noise well.
+      - MA_BAR_SIZE=1 hour
+      - MA_FAST_PERIOD=5
+      - MA_SLOW_PERIOD=20
+      - MA_QUANTITY=1
+      - MA_STOP_LOSS_PCT=3
+      - MA_TAKE_PROFIT_PCT=8
+
+      # ── RSI Mean-Reversion ──────────────────────────────────────────────────
+      - RSI_SYMBOLS=PLTR,COIN,SMCI,MSTR
+      - RSI_BAR_SIZE=1 hour
       - RSI_PERIOD=14
-      - RSI_OVERSOLD=30
-      - RSI_OVERBOUGHT=70
+      # Tighter oversold/overbought bands for hourly bars (more selective).
+      - RSI_OVERSOLD=25
+      - RSI_OVERBOUGHT=75
       - RSI_QUANTITY=1
-      - RSI_BAR_SIZE=5 mins
-      # Phase 6 — RSI bracket order percentages
-      - RSI_STOP_LOSS_PCT=5
-      - RSI_TAKE_PROFIT_PCT=10
+      - RSI_STOP_LOSS_PCT=3
+      - RSI_TAKE_PROFIT_PCT=8
+
     depends_on:
       - ib-gateway
     restart: unless-stopped

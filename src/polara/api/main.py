@@ -95,51 +95,48 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.promotion_gate = promotion_gate
 
         # Phase 3+4: Strategy registry
-        ma_strategy_id = os.environ.get("MA_STRATEGY_ID", "ma-crossover-aapl")
-        rsi_strategy_id = os.environ.get("RSI_STRATEGY_ID", "rsi-aapl")
+        # MA_SYMBOLS / RSI_SYMBOLS are comma-separated ticker lists.
+        # One strategy instance is registered per symbol, with IDs like
+        # "ma-crossover-pltr", "rsi-mean-reversion-coin", etc.
+        ma_symbols = _parse_symbols("MA_SYMBOLS", "AAPL")
+        rsi_symbols = _parse_symbols("RSI_SYMBOLS", "AAPL")
+
+        ma_stop = _decimal_env("MA_STOP_LOSS_PCT")
+        ma_tp = _decimal_env("MA_TAKE_PROFIT_PCT")
+        rsi_stop = _decimal_env("RSI_STOP_LOSS_PCT")
+        rsi_tp = _decimal_env("RSI_TAKE_PROFIT_PCT")
 
         registry = StrategyRegistry()
-        registry.register(
-            MACrossoverStrategy(
-                strategy_id=ma_strategy_id,
-                symbol=os.environ.get("MA_STRATEGY_SYMBOL", "AAPL"),
-                fast_period=int(os.environ.get("MA_FAST_PERIOD", "10")),
-                slow_period=int(os.environ.get("MA_SLOW_PERIOD", "50")),
-                quantity=Decimal(os.environ.get("MA_QUANTITY", "1")),
-                bar_size=os.environ.get("MA_BAR_SIZE", "5 mins"),
-                stop_loss_pct=(
-                    Decimal(os.environ["MA_STOP_LOSS_PCT"])
-                    if os.environ.get("MA_STOP_LOSS_PCT")
-                    else None
-                ),
-                take_profit_pct=(
-                    Decimal(os.environ["MA_TAKE_PROFIT_PCT"])
-                    if os.environ.get("MA_TAKE_PROFIT_PCT")
-                    else None
-                ),
+
+        for symbol in ma_symbols:
+            registry.register(
+                MACrossoverStrategy(
+                    strategy_id=f"ma-crossover-{symbol.lower()}",
+                    symbol=symbol,
+                    fast_period=int(os.environ.get("MA_FAST_PERIOD", "5")),
+                    slow_period=int(os.environ.get("MA_SLOW_PERIOD", "20")),
+                    quantity=Decimal(os.environ.get("MA_QUANTITY", "1")),
+                    bar_size=os.environ.get("MA_BAR_SIZE", "1 hour"),
+                    stop_loss_pct=ma_stop,
+                    take_profit_pct=ma_tp,
+                )
             )
-        )
-        registry.register(
-            RSIMeanReversionStrategy(
-                strategy_id=rsi_strategy_id,
-                symbol=os.environ.get("RSI_STRATEGY_SYMBOL", "AAPL"),
-                period=int(os.environ.get("RSI_PERIOD", "14")),
-                oversold=Decimal(os.environ.get("RSI_OVERSOLD", "30")),
-                overbought=Decimal(os.environ.get("RSI_OVERBOUGHT", "70")),
-                quantity=Decimal(os.environ.get("RSI_QUANTITY", "1")),
-                bar_size=os.environ.get("RSI_BAR_SIZE", "5 mins"),
-                stop_loss_pct=(
-                    Decimal(os.environ["RSI_STOP_LOSS_PCT"])
-                    if os.environ.get("RSI_STOP_LOSS_PCT")
-                    else None
-                ),
-                take_profit_pct=(
-                    Decimal(os.environ["RSI_TAKE_PROFIT_PCT"])
-                    if os.environ.get("RSI_TAKE_PROFIT_PCT")
-                    else None
-                ),
+
+        for symbol in rsi_symbols:
+            registry.register(
+                RSIMeanReversionStrategy(
+                    strategy_id=f"rsi-mean-reversion-{symbol.lower()}",
+                    symbol=symbol,
+                    period=int(os.environ.get("RSI_PERIOD", "14")),
+                    oversold=Decimal(os.environ.get("RSI_OVERSOLD", "30")),
+                    overbought=Decimal(os.environ.get("RSI_OVERBOUGHT", "70")),
+                    quantity=Decimal(os.environ.get("RSI_QUANTITY", "1")),
+                    bar_size=os.environ.get("RSI_BAR_SIZE", "1 hour"),
+                    stop_loss_pct=rsi_stop,
+                    take_profit_pct=rsi_tp,
+                )
             )
-        )
+
         app.state.strategy_registry = registry
 
         # Seed DB status rows for all registered strategies (paper by default)
@@ -187,6 +184,28 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if hasattr(app.state, "ib_client"):
         await app.state.ib_client.disconnect()
     logger.info("Polara Quant %s stopped", _get_version())
+
+
+def _decimal_env(key: str) -> Decimal | None:
+    """Return Decimal(env[key]) or None if the key is unset/empty."""
+    val = os.environ.get(key)
+    return Decimal(val) if val else None
+
+
+def _parse_symbols(env_var: str, default: str) -> list[str]:
+    """Return an uppercase, deduplicated symbol list from a comma-separated env var.
+
+    Example: MA_SYMBOLS=pltr,COIN, smci  →  ["PLTR", "COIN", "SMCI"]
+    """
+    raw = os.environ.get(env_var, default)
+    seen: set[str] = set()
+    result: list[str] = []
+    for tok in raw.split(","):
+        sym = tok.strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            result.append(sym)
+    return result
 
 
 def create_app() -> FastAPI:
