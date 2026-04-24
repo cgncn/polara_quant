@@ -33,8 +33,11 @@ def _duration_for_n_bars(n: int, bar_size: str) -> str:
     return f"{days // 30 + 1} M"
 
 
-def _parse_ib_datetime(date_str: str) -> datetime:
-    """Parse IB bar date string (YYYYMMDD HH:MM:SS or YYYYMMDD) as UTC datetime."""
+def _parse_ib_datetime(date_str: str | datetime) -> datetime:
+    """Parse IB bar date — accepts either a string (YYYYMMDD HH:MM:SS or YYYYMMDD)
+    or a datetime object (returned by newer ib_async versions)."""
+    if isinstance(date_str, datetime):
+        return date_str if date_str.tzinfo else date_str.replace(tzinfo=UTC)
     date_str = date_str.strip()
     if " " in date_str:
         dt = datetime.strptime(date_str, "%Y%m%d %H:%M:%S")
