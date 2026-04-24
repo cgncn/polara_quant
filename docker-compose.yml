@@ -9,6 +9,7 @@ services:
       - TWS_SETTINGS_PATH=/home/ibgateway/Jts
       - TWOFA_TIMEOUT_ACTION=restart
       - TRUSTED_IPS=
+      - EXISTING_SESSION_DETECTED_ACTION=primary
     ports:
       - "4003:4003"
     volumes:
