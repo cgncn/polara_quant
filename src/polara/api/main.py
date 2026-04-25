@@ -33,9 +33,7 @@ from polara.risk_guard.guard import RiskGuard
 
 logger = logging.getLogger(__name__)
 
-IB_HOST = os.getenv("IB_HOST", "ib-gateway")
-IB_PORT = int(os.getenv("IB_PORT", "4003"))
-IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "1"))
+CP_GATEWAY_URL = os.getenv("CP_GATEWAY_URL", "https://cp-gateway:5000/v1/api")
 
 
 @asynccontextmanager
@@ -45,27 +43,26 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Only create IBClient + adapter if not already injected (allows test injection)
     if not hasattr(app.state, "broker_adapter"):
-        ib_client = IBClient(host=IB_HOST, port=IB_PORT, client_id=IB_CLIENT_ID)
-        try:
-            await ib_client.connect()
-        except Exception:
-            logger.error("Failed to connect to IB Gateway on startup", exc_info=True)
-            await ib_client.disconnect()
-            raise
+        ib_client = IBClient(cp_gateway_url=CP_GATEWAY_URL)
+        await ib_client.connect()
 
         # Phase 2: Broker adapter
         adapter = BrokerAdapter(ib_client=ib_client, db_session_factory=AsyncSessionLocal)
-        adapter._register_callbacks()
+        adapter.start_polling()
         app.state.ib_client = ib_client
         app.state.broker_adapter = adapter
 
         # Phase 3: Market data
         market_data_db_path = os.environ.get("MARKET_DATA_DB_PATH", "data/market_data.duckdb")
-        fetcher = IBFetcher(ib=ib_client.ib)
+        fetcher = IBFetcher(cp_client=ib_client.cp)
         store = BarStore(db_path=market_data_db_path)
         market_data_svc = MarketDataService(fetcher=fetcher, store=store)
         app.state.market_data_svc = market_data_svc
         app.state.bar_store = store
+
+        # Position sizing — $120 USD per trade (set via POSITION_SIZE_USD env var)
+        pos_size_raw = os.environ.get("POSITION_SIZE_USD")
+        app.state.position_size_usd = Decimal(pos_size_raw) if pos_size_raw else None
 
         # Phase 3: Risk guard
         risk_guard = RiskGuard(
@@ -106,6 +103,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         rsi_symbols = _parse_symbols("RSI_SYMBOLS", "AAPL")
         macd_symbols = _parse_symbols("MACD_SYMBOLS", "")
         bb_symbols = _parse_symbols("BB_SYMBOLS", "")
+        bb_d30_symbols = _parse_symbols("BB_D30_SYMBOLS", "")
+        bb_d15_symbols = _parse_symbols("BB_D15_SYMBOLS", "")
         mom_symbols = _parse_symbols("MOM_SYMBOLS", "")
 
         ma_stop = _decimal_env("MA_STOP_LOSS_PCT")
@@ -116,6 +115,10 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         macd_tp = _decimal_env("MACD_TAKE_PROFIT_PCT")
         bb_stop = _decimal_env("BB_STOP_LOSS_PCT")
         bb_tp = _decimal_env("BB_TAKE_PROFIT_PCT")
+        bb_d30_stop = _decimal_env("BB_D30_STOP_LOSS_PCT")
+        bb_d30_tp = _decimal_env("BB_D30_TAKE_PROFIT_PCT")
+        bb_d15_stop = _decimal_env("BB_D15_STOP_LOSS_PCT")
+        bb_d15_tp = _decimal_env("BB_D15_TAKE_PROFIT_PCT")
         mom_stop = _decimal_env("MOM_STOP_LOSS_PCT")
         mom_tp = _decimal_env("MOM_TAKE_PROFIT_PCT")
 
@@ -176,6 +179,34 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     bar_size=os.environ.get("BB_BAR_SIZE", "1 hour"),
                     stop_loss_pct=bb_stop,
                     take_profit_pct=bb_tp,
+                )
+            )
+
+        for symbol in bb_d30_symbols:
+            registry.register(
+                BollingerBandStrategy(
+                    strategy_id=f"bb-{symbol.lower()}",
+                    symbol=symbol,
+                    period=int(os.environ.get("BB_D30_PERIOD", "30")),
+                    num_std=Decimal(os.environ.get("BB_D30_NUM_STD", "2.0")),
+                    quantity=Decimal(os.environ.get("BB_D30_QUANTITY", "1")),
+                    bar_size=os.environ.get("BB_D30_BAR_SIZE", "1 day"),
+                    stop_loss_pct=bb_d30_stop,
+                    take_profit_pct=bb_d30_tp,
+                )
+            )
+
+        for symbol in bb_d15_symbols:
+            registry.register(
+                BollingerBandStrategy(
+                    strategy_id=f"bb-{symbol.lower()}",
+                    symbol=symbol,
+                    period=int(os.environ.get("BB_D15_PERIOD", "15")),
+                    num_std=Decimal(os.environ.get("BB_D15_NUM_STD", "2.0")),
+                    quantity=Decimal(os.environ.get("BB_D15_QUANTITY", "1")),
+                    bar_size=os.environ.get("BB_D15_BAR_SIZE", "1 day"),
+                    stop_loss_pct=bb_d15_stop,
+                    take_profit_pct=bb_d15_tp,
                 )
             )
 
