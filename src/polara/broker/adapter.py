@@ -1,7 +1,7 @@
-"""BrokerAdapter — business logic layer for IB Gateway communication.
+"""BrokerAdapter — business logic layer for IBKR Client Portal REST API.
 
-All ib_async interactions happen here. Nothing else in polara/ imports ib_async.
-Float values from ib_async are converted to Decimal immediately upon receipt.
+All REST interactions happen here via IBClient → CPClient. Nothing else imports CPClient.
+Float values from the REST API are converted to Decimal immediately upon receipt.
 """
 import asyncio
 import logging
@@ -28,8 +28,6 @@ from polara.schemas.orders import Fill, OrderRequest
 logger = logging.getLogger(__name__)
 
 _PNL_SNAPSHOT_INTERVAL_SECONDS = 60
-# Avoid hitting IB's reqAccountSummary rate limit (Error 322).
-# NAV changes slowly; 5-minute cache is fresh enough for position sizing.
 _ACCOUNT_CACHE_TTL_SECONDS = 300
 
 _INSERT_ORDER = text("""
@@ -67,9 +65,17 @@ _UPSERT_POSITION = text("""
         updated_at = excluded.updated_at
 """)
 
+_STATUS_MAP = {
+    "Submitted": "submitted",
+    "PreSubmitted": "submitted",
+    "Filled": "filled",
+    "Cancelled": "cancelled",
+    "Inactive": "error",
+}
+
 
 class BrokerDisconnectedError(RuntimeError):
-    """Raised when an operation requires IB Gateway but it is not connected."""
+    """Raised when an operation requires CP Gateway authentication but it is not available."""
 
 
 class BrokerAdapter:
@@ -88,28 +94,22 @@ class BrokerAdapter:
     # ── connection status ──────────────────────────────────────────────────────
 
     async def get_broker_status(self) -> BrokerStatus:
-        if not self._client.connected:
-            return BrokerStatus(connected=False, ib_server_time=None, account_id=None)
         try:
-            epoch = await self._client.ib.reqCurrentTimeAsync()
-            server_time = datetime.fromtimestamp(epoch, tz=UTC)
-        except Exception:  # noqa: BLE001
-            server_time = None
-        accounts = self._client.ib.managedAccounts()
-        account_id = accounts[0] if accounts else None
-        return BrokerStatus(
-            connected=True,
-            ib_server_time=server_time,
-            account_id=account_id,
-        )
+            status = await self._client.cp.auth_status()
+            account_id = self._client.cp._account_id
+            return BrokerStatus(
+                connected=bool(status.get("authenticated")),
+                ib_server_time=datetime.now(UTC),
+                account_id=account_id,
+            )
+        except Exception:
+            return BrokerStatus(connected=False, ib_server_time=None, account_id=None)
 
     # ── account ────────────────────────────────────────────────────────────────
 
     async def get_account(self, *, force_refresh: bool = False) -> AccountInfo:
-        """Return account info, using a short-lived cache to avoid IB Error 322.
+        """Return account info, using a short-lived cache to avoid hammering the REST API.
 
-        IB limits concurrent reqAccountSummary subscriptions per client ID.
-        The cache (TTL=5 min) is fresh enough for position sizing and risk checks.
         Pass force_refresh=True to bypass the cache (e.g. for the PnL snapshot loop).
         """
         now = datetime.now(UTC)
@@ -121,19 +121,18 @@ class BrokerAdapter:
             return self._account_cache[1]
 
         self._require_connected()
-        summary = await self._client.ib.reqAccountSummaryAsync()
-        values: dict[str, str] = {}
-        currency = "USD"
-        for av in summary:
-            values[av.tag] = av.value
-            if av.tag == "NetLiquidation":
-                currency = av.currency
+        summary = await self._client.cp.account_summary()
+
+        def _d(key: str) -> Decimal:
+            entry = summary.get(key, {})
+            return Decimal(str(entry.get("amount", 0)))
+
         account = AccountInfo(
-            net_liquidation=Decimal(values.get("NetLiquidation", "0")),
-            cash=Decimal(values.get("TotalCashValue", "0")),
-            unrealised_pnl=Decimal(values.get("UnrealizedPnL", "0")),
-            realised_pnl=Decimal(values.get("RealizedPnL", "0")),
-            currency=currency,
+            net_liquidation=_d("netliquidation"),
+            cash=_d("totalcashvalue"),
+            unrealised_pnl=_d("unrealizedpnl"),
+            realised_pnl=_d("realizedpnl"),
+            currency="USD",
             timestamp=now,
         )
         self._account_cache = (now, account)
@@ -143,19 +142,19 @@ class BrokerAdapter:
 
     async def get_positions(self, db: AsyncSession | None = None) -> list[Position]:
         self._require_connected()
-        ib_positions = self._client.ib.positions()
+        data = await self._client.cp.positions()
         result: list[Position] = []
         now = datetime.now(UTC)
-        for p in ib_positions:
-            qty = Decimal(str(p.position))
-            avg = Decimal(str(p.avgCost))
-            unrealised = Decimal(str(p.unrealPnl))
+        for p in data:
+            qty = p.get("position", 0)
+            if qty == 0:
+                continue
             result.append(
                 Position(
-                    symbol=p.contract.symbol,
-                    quantity=qty,
-                    avg_cost=avg,
-                    unrealised_pnl=unrealised,
+                    symbol=p.get("contractDesc", p.get("ticker", "")),
+                    quantity=Decimal(str(qty)),
+                    avg_cost=Decimal(str(p.get("avgCost", 0))),
+                    unrealised_pnl=Decimal(str(p.get("unrealPnl", 0))),
                     updated_at=now,
                 )
             )
@@ -178,21 +177,24 @@ class BrokerAdapter:
     # ── orders ─────────────────────────────────────────────────────────────────
 
     async def place_order(self, req: OrderRequest, db: AsyncSession) -> str:
-        """Submit order to IB and persist to DB. Returns order_id as string."""
+        """Submit order via CP REST API and persist to DB. Returns order_id as string."""
         self._require_connected()
-        from ib_async import LimitOrder, MarketOrder, Stock  # noqa: PLC0415
-
-        contract = Stock(req.symbol, "SMART", "USD")
-        action = req.side.upper()
-        # ib_async constructors require float — this is the sole intentional IB API boundary
-        # conversion. All internal representation stays Decimal. See CLAUDE.md Rule 1 exception.
+        conid = await self._client.cp.get_conid(req.symbol)
+        payload: dict[str, Any] = {
+            "conid": conid,
+            "orderType": "LMT" if req.limit_price is not None else "MKT",
+            "side": req.side.upper(),
+            "quantity": float(req.quantity),
+            "tif": "DAY",
+            "acctId": self._client.cp.account_id,
+        }
         if req.limit_price is not None:
-            order = LimitOrder(action, float(req.quantity), float(req.limit_price))
-        else:
-            order = MarketOrder(action, float(req.quantity))
+            payload["price"] = float(req.limit_price)
 
-        trade = self._client.ib.placeOrder(contract, order)
-        ib_order_id: int | None = trade.order.orderId if trade else None
+        results = await self._client.cp.place_orders([payload])
+        ib_order_id: int | None = None
+        if results and "order_id" in results[0]:
+            ib_order_id = int(results[0]["order_id"])
 
         now = datetime.now(UTC)
         await db.execute(
@@ -221,56 +223,68 @@ class BrokerAdapter:
         take_profit_price: Decimal | None,
         db: AsyncSession,
     ) -> str:
-        """Submit a bracket order (parent market + stop child + take-profit child).
+        """Submit a bracket order via CP REST API (parent market + stop child + TP child).
 
-        IB requires transmit=False on all orders except the last child, which uses
-        transmit=True to atomically submit the entire bracket.
-        Returns the parent order_id as a string.
+        Uses cOID/parentId to link children to parent. Returns parent order_id.
         """
         self._require_connected()
-        from ib_async import LimitOrder, MarketOrder, Stock, StopOrder  # noqa: PLC0415
-
-        contract = Stock(req.symbol, "SMART", "USD")
+        conid = await self._client.cp.get_conid(req.symbol)
         action = req.side.upper()
         opposite = "SELL" if action == "BUY" else "BUY"
         qty = float(req.quantity)
+        parent_coid = str(uuid.uuid4())
 
-        # Reserve parent order ID before creating children (they need parentId set).
-        parent_id = self._client.ib.client.getReqId()
-
-        parent = MarketOrder(action, qty, transmit=False)
-        parent.orderId = parent_id
-
-        # Build child orders; last one gets transmit=True.
-        children: list[object] = []
+        orders: list[dict[str, Any]] = [
+            {
+                "cOID": parent_coid,
+                "conid": conid,
+                "orderType": "MKT",
+                "side": action,
+                "quantity": qty,
+                "tif": "DAY",
+                "acctId": self._client.cp.account_id,
+            }
+        ]
         if stop_price is not None:
-            stop = StopOrder(
-                opposite, qty, float(stop_price), parentId=parent_id, transmit=False
+            orders.append(
+                {
+                    "parentId": parent_coid,
+                    "conid": conid,
+                    "orderType": "STP",
+                    "side": opposite,
+                    "auxPrice": float(stop_price),
+                    "quantity": qty,
+                    "tif": "GTC",
+                    "acctId": self._client.cp.account_id,
+                }
             )
-            children.append(stop)
         if take_profit_price is not None:
-            tp = LimitOrder(
-                opposite, qty, float(take_profit_price), parentId=parent_id, transmit=False
+            orders.append(
+                {
+                    "parentId": parent_coid,
+                    "conid": conid,
+                    "orderType": "LMT",
+                    "side": opposite,
+                    "price": float(take_profit_price),
+                    "quantity": qty,
+                    "tif": "GTC",
+                    "acctId": self._client.cp.account_id,
+                }
             )
-            children.append(tp)
 
-        if children:
-            children[-1].transmit = True  # type: ignore[attr-defined]
-        else:
-            parent.transmit = True  # no children — transmit parent immediately
-
-        parent_trade = self._client.ib.placeOrder(contract, parent)
-        ib_order_id: int | None = parent_trade.order.orderId if parent_trade else None
-
+        results = await self._client.cp.place_orders(orders)
+        ib_order_id: int | None = None
         stop_ib_id: int | None = None
         tp_ib_id: int | None = None
-        for i, child in enumerate(children):
-            child_trade = self._client.ib.placeOrder(contract, child)
-            child_ib_id = child_trade.order.orderId if child_trade else None
-            if stop_price is not None and i == 0:
-                stop_ib_id = child_ib_id
-            else:
-                tp_ib_id = child_ib_id
+        if results:
+            if "order_id" in results[0]:
+                ib_order_id = int(results[0]["order_id"])
+            if stop_price is not None and len(results) > 1 and "order_id" in results[1]:
+                stop_ib_id = int(results[1]["order_id"])
+            if take_profit_price is not None:
+                idx = 2 if stop_price is not None else 1
+                if len(results) > idx and "order_id" in results[idx]:
+                    tp_ib_id = int(results[idx]["order_id"])
 
         now = datetime.now(UTC)
         await db.execute(
@@ -305,7 +319,10 @@ class BrokerAdapter:
         await db.commit()
         logger.info(
             "Bracket order %s submitted (parent_ib_id=%s, stop=%s, tp=%s)",
-            req.order_id, ib_order_id, stop_price, take_profit_price,
+            req.order_id,
+            ib_order_id,
+            stop_price,
+            take_profit_price,
         )
         return str(req.order_id)
 
@@ -326,10 +343,7 @@ class BrokerAdapter:
             raise ValueError(f"Cannot cancel order in status '{row.status}'")
 
         if row.ib_order_id is not None:
-            from ib_async import Order as IBOrder  # noqa: PLC0415
-            cancel_order = IBOrder()
-            cancel_order.orderId = row.ib_order_id
-            self._client.ib.cancelOrder(cancel_order)
+            await self._client.cp.cancel_order(int(row.ib_order_id))
 
         await db.execute(
             text("UPDATE orders SET status = 'cancelled' WHERE order_id = :oid"),
@@ -470,124 +484,49 @@ class BrokerAdapter:
             for r in rows
         ]
 
-    # ── IB callbacks ───────────────────────────────────────────────────────────
+    # ── order polling (replaces ib_async event callbacks) ─────────────────────
 
-    def _register_callbacks(self) -> None:
-        """Attach ib_async event handlers for fills and order status changes.
-
-        Must be called once after the IBClient is connected (i.e., from FastAPI lifespan).
-        Calling before connection is established has no effect since callbacks only fire
-        while the IB session is active.
-        """
-        self._client.ib.execDetailsEvent += self._on_exec_details
-        self._client.ib.orderStatusEvent += self._on_order_status
-
-    def _on_exec_details(self, trade: Any, fill: Any) -> None:
-        """Fired when a fill execution arrives."""
-        task = asyncio.create_task(self._save_fill(fill))
+    def start_polling(self) -> asyncio.Task[None]:
+        task = asyncio.create_task(self._order_polling_loop())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        return task
 
-    async def _save_fill(self, fill: Any) -> None:
-        """Persist a fill from IB to the fills table."""
-        try:
-            exec_ = fill.execution
-            comm = fill.commissionReport
+    async def _order_polling_loop(self) -> None:
+        while True:
+            await asyncio.sleep(5)
+            if not self._client.connected:
+                continue
+            try:
+                await self._sync_open_orders()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("order poll error: %s", exc)
 
-            async with self._db_factory() as db:
-                # Look up the application-layer order_id UUID from the ib_order_id integer
-                order_row = (
+    async def _sync_open_orders(self) -> None:
+        resp = await self._client.cp.list_orders()
+        orders_data = resp.get("orders") or []
+        async with self._db_factory() as db:
+            for o in orders_data:
+                ib_id = o.get("orderId")
+                raw_status = o.get("status", "")
+                our_status = _STATUS_MAP.get(raw_status)
+                if ib_id and our_status:
                     await db.execute(
-                        text("SELECT order_id FROM orders WHERE ib_order_id = :ib_oid"),
-                        {"ib_oid": exec_.orderId},
+                        text(
+                            "UPDATE orders SET status = :status WHERE ib_order_id = :ib_oid"
+                        ),
+                        {"status": our_status, "ib_oid": int(ib_id)},
                     )
-                ).fetchone()
-
-                if order_row is None:
-                    logger.error(
-                        "Cannot save fill: no order found for ib_order_id=%s (execId=%s)",
-                        exec_.orderId,
-                        exec_.execId,
-                    )
-                    return
-
-                # Parse fill timestamp from IB execution object
-                filled_at: str
-                if hasattr(exec_, "time") and exec_.time:
-                    filled_at = _parse_dt(str(exec_.time)).isoformat()
-                else:
-                    filled_at = datetime.now(UTC).isoformat()
-
-                # ON CONFLICT (fill_id) DO NOTHING: PostgreSQL 9.5+ and SQLite 3.24+
-                # portable syntax — not SQLite-specific.
-                await db.execute(
-                    text("""
-                        INSERT INTO fills
-                            (id, fill_id, order_id, symbol, side,
-                             filled_quantity, fill_price, commission, filled_at)
-                        VALUES
-                            (:id, :fill_id, :order_id, :symbol, :side,
-                             :filled_quantity, :fill_price, :commission, :filled_at)
-                        ON CONFLICT (fill_id) DO NOTHING
-                    """),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "fill_id": exec_.execId,
-                        "order_id": order_row.order_id,
-                        "symbol": fill.contract.symbol,
-                        "side": "buy" if exec_.side == "BOT" else "sell",
-                        "filled_quantity": str(Decimal(str(exec_.shares))),
-                        "fill_price": str(Decimal(str(exec_.price))),
-                        "commission": str(Decimal(str(comm.commission))) if comm else "0",
-                        "filled_at": filled_at,
-                    },
-                )
-                await db.execute(
-                    text(
-                        "UPDATE orders SET status = 'filled', filled_at = :now "
-                        "WHERE ib_order_id = :ib_oid"
-                    ),
-                    {"now": datetime.now(UTC).isoformat(), "ib_oid": exec_.orderId},
-                )
-                await db.commit()
-            logger.info("Fill saved: execId=%s", exec_.execId)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to save fill: %s", exc)
-
-    def _on_order_status(self, trade: Any) -> None:
-        """Fired when order status changes."""
-        task = asyncio.create_task(self._update_order_status(trade))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-
-    async def _update_order_status(self, trade: Any) -> None:
-        """Persist IB order status change to DB."""
-        try:
-            ib_status = trade.orderStatus.status
-            status_map = {
-                "Submitted": "submitted",
-                "PreSubmitted": "submitted",
-                "Filled": "filled",
-                "Cancelled": "cancelled",
-                "Inactive": "error",
-            }
-            our_status = status_map.get(ib_status)
-            if our_status is None:
-                return
-            async with self._db_factory() as db:
-                await db.execute(
-                    text("UPDATE orders SET status = :status WHERE ib_order_id = :ib_oid"),
-                    {"status": our_status, "ib_oid": trade.order.orderId},
-                )
-                await db.commit()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to update order status: %s", exc)
+            await db.commit()
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
     def _require_connected(self) -> None:
         if not self._client.connected:
-            raise BrokerDisconnectedError("IB Gateway is not connected")
+            raise BrokerDisconnectedError(
+                "IBKR Client Portal Gateway is not authenticated. "
+                "Visit https://<cp-gateway-host>:5000 to log in."
+            )
 
 
 def _parse_dt(value: str) -> datetime:

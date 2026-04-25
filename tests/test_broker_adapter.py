@@ -1,4 +1,4 @@
-"""Tests for BrokerAdapter — ib_async client is fully mocked."""
+"""Tests for BrokerAdapter — CPClient is mocked directly."""
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -12,14 +12,37 @@ from polara.broker.schemas import AccountInfo, BrokerStatus, PnLSnapshot, Positi
 from polara.schemas.orders import OrderRequest
 
 
+def make_mock_cp(connected: bool = True) -> MagicMock:
+    """Build a minimal mock CPClient."""
+    cp = MagicMock()
+    cp.connected = connected
+    cp._account_id = "DU123456" if connected else None
+    cp.account_id = "DU123456"
+    cp.auth_status = AsyncMock(
+        return_value={"authenticated": connected, "connected": connected}
+    )
+    cp.account_summary = AsyncMock(
+        return_value={
+            "netliquidation": {"amount": 0.0, "currency": "USD"},
+            "totalcashvalue": {"amount": 0.0, "currency": "USD"},
+            "unrealizedpnl": {"amount": 0.0, "currency": "USD"},
+            "realizedpnl": {"amount": 0.0, "currency": "USD"},
+        }
+    )
+    cp.positions = AsyncMock(return_value=[])
+    cp.get_conid = AsyncMock(return_value=488867728)
+    cp.place_orders = AsyncMock(
+        return_value=[{"order_id": "42", "order_status": "PreSubmitted"}]
+    )
+    cp.cancel_order = AsyncMock(return_value={"msg": "cancelled"})
+    cp.list_orders = AsyncMock(return_value={"orders": []})
+    return cp
+
+
 def make_mock_ib_client(connected: bool = True) -> MagicMock:
-    """Build a minimal mock IBClient."""
     client = MagicMock()
     client.connected = connected
-    ib = MagicMock()
-    ib.isConnected.return_value = connected
-    ib.managedAccounts.return_value = []
-    client.ib = ib
+    client.cp = make_mock_cp(connected)
     return client
 
 
@@ -44,7 +67,6 @@ def make_order_request() -> OrderRequest:
 @pytest.mark.asyncio
 async def test_get_broker_status_connected():
     client = make_mock_ib_client(connected=True)
-    client.ib.reqCurrentTimeAsync = AsyncMock(return_value=1000000)
     adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     status = await adapter.get_broker_status()
     assert isinstance(status, BrokerStatus)
@@ -53,7 +75,8 @@ async def test_get_broker_status_connected():
 
 @pytest.mark.asyncio
 async def test_get_broker_status_disconnected():
-    client = make_mock_ib_client(connected=False)
+    client = make_mock_ib_client(connected=True)
+    client.cp.auth_status = AsyncMock(side_effect=Exception("gateway error"))
     adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     status = await adapter.get_broker_status()
     assert status.connected is False
@@ -73,26 +96,19 @@ async def test_get_account_disconnected_raises():
 @pytest.mark.asyncio
 async def test_get_account_returns_account_info():
     client = make_mock_ib_client(connected=True)
-
-    def make_av(tag: str, value: str, currency: str = "USD") -> MagicMock:
-        av = MagicMock()
-        av.tag = tag
-        av.value = value
-        av.currency = currency
-        return av
-
-    client.ib.reqAccountSummaryAsync = AsyncMock(return_value=[
-        make_av("NetLiquidation", "100000.00"),
-        make_av("TotalCashValue", "50000.00"),
-        make_av("UnrealizedPnL", "500.00"),
-        make_av("RealizedPnL", "200.00"),
-    ])
-
+    client.cp.account_summary = AsyncMock(
+        return_value={
+            "netliquidation": {"amount": 100000.0, "currency": "USD"},
+            "totalcashvalue": {"amount": 50000.0, "currency": "USD"},
+            "unrealizedpnl": {"amount": 500.0, "currency": "USD"},
+            "realizedpnl": {"amount": 200.0, "currency": "USD"},
+        }
+    )
     adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     info = await adapter.get_account()
     assert isinstance(info, AccountInfo)
-    assert info.net_liquidation == Decimal("100000.00")
-    assert info.cash == Decimal("50000.00")
+    assert info.net_liquidation == Decimal("100000.0")
+    assert info.cash == Decimal("50000.0")
     assert info.currency == "USD"
 
 
@@ -109,24 +125,25 @@ async def test_get_positions_disconnected_raises():
 @pytest.mark.asyncio
 async def test_get_positions_returns_list():
     client = make_mock_ib_client(connected=True)
-
-    mock_pos = MagicMock()
-    mock_pos.contract.symbol = "AAPL"
-    mock_pos.position = 10.0   # ib_async returns float — adapter must convert
-    mock_pos.avgCost = 150.0
-    mock_pos.unrealPnl = 50.0
-    client.ib.positions.return_value = [mock_pos]
-
+    client.cp.positions = AsyncMock(
+        return_value=[
+            {
+                "contractDesc": "AAPL",
+                "position": 10.0,
+                "avgCost": 150.0,
+                "unrealPnl": 50.0,
+            }
+        ]
+    )
     adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     positions = await adapter.get_positions()
     assert len(positions) == 1
     p = positions[0]
     assert isinstance(p, Position)
     assert p.symbol == "AAPL"
-    assert p.quantity == Decimal("10")   # converted from float
-    assert p.avg_cost == Decimal("150")  # converted from float
+    assert p.quantity == Decimal("10.0")
+    assert p.avg_cost == Decimal("150.0")
     assert isinstance(p.unrealised_pnl, Decimal)
-    assert isinstance(p.unrealised_pnl, Decimal)  # NOT a float
 
 
 # ── place_order ────────────────────────────────────────────────────────────────
@@ -142,11 +159,6 @@ async def test_place_order_disconnected_raises():
 @pytest.mark.asyncio
 async def test_place_order_returns_order_id():
     client = make_mock_ib_client(connected=True)
-
-    mock_trade = MagicMock()
-    mock_trade.order.orderId = 42
-    client.ib.placeOrder.return_value = mock_trade
-
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock()
     mock_db.commit = AsyncMock()
@@ -162,22 +174,15 @@ async def test_place_order_returns_order_id():
 
 @pytest.mark.asyncio
 async def test_pnl_snapshot_loop_saves_to_db():
-    """Verify pnl_snapshot_loop calls get_pnl_snapshot and saves to DB."""
     client = make_mock_ib_client(connected=True)
-
-    def make_av(tag: str, value: str) -> MagicMock:
-        av = MagicMock()
-        av.tag = tag
-        av.value = value
-        av.currency = "USD"
-        return av
-
-    client.ib.reqAccountSummaryAsync = AsyncMock(return_value=[
-        make_av("NetLiquidation", "100000"),
-        make_av("TotalCashValue", "50000"),
-        make_av("UnrealizedPnL", "500"),
-        make_av("RealizedPnL", "200"),
-    ])
+    client.cp.account_summary = AsyncMock(
+        return_value={
+            "netliquidation": {"amount": 100000.0, "currency": "USD"},
+            "totalcashvalue": {"amount": 50000.0, "currency": "USD"},
+            "unrealizedpnl": {"amount": 500.0, "currency": "USD"},
+            "realizedpnl": {"amount": 200.0, "currency": "USD"},
+        }
+    )
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock()
@@ -190,6 +195,7 @@ async def test_pnl_snapshot_loop_saves_to_db():
     adapter = BrokerAdapter(ib_client=client, db_session_factory=mock_session_factory)
 
     call_count = 0
+
     async def fake_sleep(_: float) -> None:
         nonlocal call_count
         call_count += 1
@@ -235,9 +241,6 @@ async def test_cancel_order_terminal_status_raises():
 
 # ── place_bracket_order ───────────────────────────────────────────────────────
 
-"""Tests for BrokerAdapter.place_bracket_order."""
-
-
 def make_bracket_order_req(side: str = "buy") -> OrderRequest:
     return OrderRequest(
         order_id=uuid4(),
@@ -250,90 +253,66 @@ def make_bracket_order_req(side: str = "buy") -> OrderRequest:
     )
 
 
-def make_bracket_adapter():
-    client = MagicMock()
-    client.connected = True
-    client.ib.client.getReqId.return_value = 42
+@pytest.mark.asyncio
+async def test_place_bracket_order_calls_place_orders_with_three():
+    client = make_mock_ib_client(connected=True)
+    client.cp.place_orders = AsyncMock(
+        return_value=[
+            {"order_id": "1"},
+            {"order_id": "2"},
+            {"order_id": "3"},
+        ]
+    )
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
 
-    def _place_order_side_effect(contract, order):
-        trade = MagicMock()
-        trade.order.orderId = order.orderId if hasattr(order, "orderId") and order.orderId else 99
-        return trade
-
-    client.ib.placeOrder.side_effect = _place_order_side_effect
-
-    db_factory = MagicMock()
-    db_session = AsyncMock()
-    db_session.execute = AsyncMock()
-    db_session.commit = AsyncMock()
-    db_session.__aenter__ = AsyncMock(return_value=db_session)
-    db_session.__aexit__ = AsyncMock(return_value=None)
-
-    return BrokerAdapter(ib_client=client, db_session_factory=db_factory), client, db_session
+    adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
+    req = make_bracket_order_req("buy")
+    result = await adapter.place_bracket_order(
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=mock_db
+    )
+    assert result == str(req.order_id)
+    orders_sent = client.cp.place_orders.call_args[0][0]
+    assert len(orders_sent) == 3
+    assert orders_sent[0]["orderType"] == "MKT"
+    assert orders_sent[1]["orderType"] == "STP"
+    assert orders_sent[2]["orderType"] == "LMT"
 
 
 @pytest.mark.asyncio
-async def test_place_bracket_order_submits_three_ib_orders():
-    adapter, client, db = make_bracket_adapter()
+async def test_place_bracket_order_opposite_side_for_buy():
+    client = make_mock_ib_client(connected=True)
+    client.cp.place_orders = AsyncMock(return_value=[{"order_id": "1"}, {"order_id": "2"}, {"order_id": "3"}])
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+
+    adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     req = make_bracket_order_req("buy")
     await adapter.place_bracket_order(
-        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
+        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=mock_db
     )
-    assert client.ib.placeOrder.call_count == 3
+    orders_sent = client.cp.place_orders.call_args[0][0]
+    assert orders_sent[0]["side"] == "BUY"
+    assert orders_sent[1]["side"] == "SELL"
+    assert orders_sent[2]["side"] == "SELL"
 
 
 @pytest.mark.asyncio
-async def test_bracket_parent_transmit_false():
-    adapter, client, db = make_bracket_adapter()
-    req = make_bracket_order_req("buy")
-    await adapter.place_bracket_order(
-        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
-    )
-    parent_order = client.ib.placeOrder.call_args_list[0][0][1]
-    assert parent_order.transmit is False
+async def test_place_bracket_order_opposite_side_for_sell():
+    client = make_mock_ib_client(connected=True)
+    client.cp.place_orders = AsyncMock(return_value=[{"order_id": "1"}, {"order_id": "2"}, {"order_id": "3"}])
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
 
-
-@pytest.mark.asyncio
-async def test_bracket_last_child_transmit_true():
-    adapter, client, db = make_bracket_adapter()
-    req = make_bracket_order_req("buy")
-    await adapter.place_bracket_order(
-        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
-    )
-    last_order = client.ib.placeOrder.call_args_list[2][0][1]
-    assert last_order.transmit is True
-
-
-@pytest.mark.asyncio
-async def test_bracket_children_have_correct_parent_id():
-    adapter, client, db = make_bracket_adapter()
-    req = make_bracket_order_req("buy")
-    await adapter.place_bracket_order(
-        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
-    )
-    stop_order = client.ib.placeOrder.call_args_list[1][0][1]
-    tp_order = client.ib.placeOrder.call_args_list[2][0][1]
-    assert stop_order.parentId == 42
-    assert tp_order.parentId == 42
-
-
-@pytest.mark.asyncio
-async def test_bracket_stop_is_sell_for_buy_parent():
-    adapter, client, db = make_bracket_adapter()
-    req = make_bracket_order_req("buy")
-    await adapter.place_bracket_order(
-        req, stop_price=Decimal("95.00"), take_profit_price=Decimal("110.00"), db=db
-    )
-    stop_order = client.ib.placeOrder.call_args_list[1][0][1]
-    assert stop_order.action == "SELL"
-
-
-@pytest.mark.asyncio
-async def test_bracket_stop_is_buy_for_sell_parent():
-    adapter, client, db = make_bracket_adapter()
+    adapter = BrokerAdapter(ib_client=client, db_session_factory=AsyncMock())
     req = make_bracket_order_req("sell")
     await adapter.place_bracket_order(
-        req, stop_price=Decimal("105.00"), take_profit_price=Decimal("90.00"), db=db
+        req, stop_price=Decimal("105.00"), take_profit_price=Decimal("90.00"), db=mock_db
     )
-    stop_order = client.ib.placeOrder.call_args_list[1][0][1]
-    assert stop_order.action == "BUY"
+    orders_sent = client.cp.place_orders.call_args[0][0]
+    assert orders_sent[0]["side"] == "SELL"
+    assert orders_sent[1]["side"] == "BUY"
+    assert orders_sent[2]["side"] == "BUY"
