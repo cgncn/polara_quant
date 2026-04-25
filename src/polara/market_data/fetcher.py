@@ -1,17 +1,23 @@
-"""IBFetcher — wraps ib_async historical data and quote requests.
+"""IBFetcher — wraps CPClient historical data and quote requests.
 
-All float values from ib_async are converted to Decimal at this boundary.
+All float values from the CP API are converted to Decimal at this boundary.
 """
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from ib_async import IB, Contract
-
+from polara.broker.cp_client import CPClient
 from polara.schemas.market import Bar, Quote
 
-# Mapping from bar_size to approximate minutes per bar.
-# Used to calculate a durationStr long enough to cover n bars.
-_BAR_SIZE_MINUTES: dict[str, int] = {
+_BAR_SIZE_MAP: dict[str, str] = {
+    "1 min": "1min",
+    "5 mins": "5mins",
+    "15 mins": "15mins",
+    "30 mins": "30mins",
+    "1 hour": "1h",
+    "1 day": "1d",
+}
+
+_MINUTES_PER_BAR: dict[str, int] = {
     "1 min": 1,
     "5 mins": 5,
     "15 mins": 15,
@@ -21,87 +27,65 @@ _BAR_SIZE_MINUTES: dict[str, int] = {
 }
 
 
-def _duration_for_n_bars(n: int, bar_size: str) -> str:
-    """Return an IB durationStr that covers at least n bars of bar_size.
-
-    Uses 2× buffer to account for weekends and holidays. IB supports up to
-    '5 Y' for intraday bars and '20 Y' for daily bars.
-    """
-    minutes = _BAR_SIZE_MINUTES.get(bar_size, 5)
-    total_minutes = n * minutes * 2  # 2x buffer
+def _cp_period(n: int, bar_size: str) -> str:
+    """Return CP API period string covering at least n bars (2× buffer)."""
+    minutes = _MINUTES_PER_BAR.get(bar_size, 5)
+    total_minutes = n * minutes * 2
     if total_minutes <= 1440:
-        return f"{max(1, total_minutes // 60 + 1)} D"
+        return f"{max(1, total_minutes // 60 + 1)}d"
     days = total_minutes // 1440 + 1
-    if days <= 365:
-        return f"{days} D"
-    years = days // 365 + 1
-    return f"{years} Y"
-
-
-def _parse_ib_datetime(date_str: str | datetime) -> datetime:
-    """Parse IB bar date — accepts either a string (YYYYMMDD HH:MM:SS or YYYYMMDD)
-    or a datetime object (returned by newer ib_async versions, may be non-UTC)."""
-    if isinstance(date_str, datetime):
-        if date_str.tzinfo is None:
-            return date_str.replace(tzinfo=UTC)
-        return date_str.astimezone(UTC)
-    date_str = date_str.strip()
-    if " " in date_str:
-        dt = datetime.strptime(date_str, "%Y%m%d %H:%M:%S")
-    else:
-        dt = datetime.strptime(date_str, "%Y%m%d")
-    return dt.replace(tzinfo=UTC)
+    if days <= 30:
+        return f"{days}d"
+    months = days // 30 + 1
+    if months <= 12:
+        return f"{months}m"
+    years = months // 12 + 1
+    return f"{years}y"
 
 
 class IBFetcher:
-    """Fetches bars and quotes from IB Gateway via ib_async."""
+    """Fetches bars and quotes from IBKR CP Gateway via CPClient."""
 
-    def __init__(self, ib: IB) -> None:
-        self._ib = ib
-
-    def _make_contract(self, symbol: str) -> Contract:
-        return Contract(symbol=symbol, secType="STK", exchange="SMART", currency="USD")
+    def __init__(self, cp_client: CPClient) -> None:
+        self._cp = cp_client
 
     async def fetch_bars(self, symbol: str, n: int, bar_size: str = "5 mins") -> list[Bar]:
         """Fetch last n bars for symbol. Returns Decimal prices, UTC datetimes."""
-        contract = self._make_contract(symbol)
-        duration = _duration_for_n_bars(n, bar_size)
-        raw_bars = await self._ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime="",
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow="TRADES",
-            useRTH=True,
-            formatDate=1,
-        )
+        conid = await self._cp.get_conid(symbol)
+        cp_bar = _BAR_SIZE_MAP.get(bar_size, "5mins")
+        period = _cp_period(n, bar_size)
+        resp = await self._cp.historical_bars(conid, period=period, bar=cp_bar)
+        raw_data: list[dict] = resp.get("data", [])
         bars = [
             Bar(
                 symbol=symbol,
-                timestamp=_parse_ib_datetime(b.date),
-                open=Decimal(str(b.open)),
-                high=Decimal(str(b.high)),
-                low=Decimal(str(b.low)),
-                close=Decimal(str(b.close)),
-                volume=int(b.volume),
+                timestamp=datetime.fromtimestamp(d["t"] / 1000, tz=UTC),
+                open=Decimal(str(d["o"])),
+                high=Decimal(str(d["h"])),
+                low=Decimal(str(d["l"])),
+                close=Decimal(str(d["c"])),
+                volume=int(d.get("v", 0)),
             )
-            for b in raw_bars
+            for d in raw_data
         ]
-        # Return only the last n bars (IB may return more due to duration rounding)
         return bars[-n:] if len(bars) > n else bars
 
     async def fetch_quote(self, symbol: str) -> Quote:
-        """Fetch live bid/ask for symbol."""
-        contract = self._make_contract(symbol)
-        tickers = await self._ib.reqTickersAsync(contract)
-        if not tickers:
-            raise ValueError(f"No ticker data returned for {symbol}")
-        t = tickers[0]
+        """Fetch live bid/ask for symbol via market snapshot."""
+        conid = await self._cp.get_conid(symbol)
+        snapshots = await self._cp.market_snapshot([conid])
+        if not snapshots:
+            raise ValueError(f"No snapshot data returned for {symbol}")
+        snap = snapshots[0]
+        bid_raw = snap.get("84")
+        ask_raw = snap.get("86")
+        if bid_raw is None or ask_raw is None:
+            raise ValueError(f"Bid/ask not available in snapshot for {symbol}")
         return Quote(
             symbol=symbol,
             timestamp=datetime.now(UTC),
-            bid=Decimal(str(t.bid)),
-            ask=Decimal(str(t.ask)),
-            bid_size=int(t.bidSize),
-            ask_size=int(t.askSize),
+            bid=Decimal(str(bid_raw)),
+            ask=Decimal(str(ask_raw)),
+            bid_size=int(snap.get("88", 0)),
+            ask_size=int(snap.get("85", 0)),
         )
