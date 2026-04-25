@@ -24,7 +24,10 @@ from polara.research_engine.promotion import PromotionGate
 from polara.research_engine.registry import StrategyRegistry
 from polara.research_engine.scheduler import StrategyScheduler
 from polara.research_engine.status_service import StrategyStatusService
+from polara.research_engine.strategies.bollinger_bands import BollingerBandStrategy
 from polara.research_engine.strategies.ma_crossover import MACrossoverStrategy
+from polara.research_engine.strategies.macd import MACDStrategy
+from polara.research_engine.strategies.momentum import MomentumStrategy
 from polara.research_engine.strategies.rsi_mean_reversion import RSIMeanReversionStrategy
 from polara.risk_guard.guard import RiskGuard
 
@@ -75,6 +78,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.status_service = status_service
 
         backtest_svc = BacktestService(db_session_factory=AsyncSessionLocal)
+        await backtest_svc.migrate()
         app.state.backtest_svc = backtest_svc
 
         # Phase 3: Order manager (Phase 4: gains status_service check)
@@ -100,11 +104,20 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # "ma-crossover-pltr", "rsi-mean-reversion-coin", etc.
         ma_symbols = _parse_symbols("MA_SYMBOLS", "AAPL")
         rsi_symbols = _parse_symbols("RSI_SYMBOLS", "AAPL")
+        macd_symbols = _parse_symbols("MACD_SYMBOLS", "")
+        bb_symbols = _parse_symbols("BB_SYMBOLS", "")
+        mom_symbols = _parse_symbols("MOM_SYMBOLS", "")
 
         ma_stop = _decimal_env("MA_STOP_LOSS_PCT")
         ma_tp = _decimal_env("MA_TAKE_PROFIT_PCT")
         rsi_stop = _decimal_env("RSI_STOP_LOSS_PCT")
         rsi_tp = _decimal_env("RSI_TAKE_PROFIT_PCT")
+        macd_stop = _decimal_env("MACD_STOP_LOSS_PCT")
+        macd_tp = _decimal_env("MACD_TAKE_PROFIT_PCT")
+        bb_stop = _decimal_env("BB_STOP_LOSS_PCT")
+        bb_tp = _decimal_env("BB_TAKE_PROFIT_PCT")
+        mom_stop = _decimal_env("MOM_STOP_LOSS_PCT")
+        mom_tp = _decimal_env("MOM_TAKE_PROFIT_PCT")
 
         registry = StrategyRegistry()
 
@@ -134,6 +147,49 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     bar_size=os.environ.get("RSI_BAR_SIZE", "1 hour"),
                     stop_loss_pct=rsi_stop,
                     take_profit_pct=rsi_tp,
+                )
+            )
+
+        for symbol in macd_symbols:
+            registry.register(
+                MACDStrategy(
+                    strategy_id=f"macd-{symbol.lower()}",
+                    symbol=symbol,
+                    fast_period=int(os.environ.get("MACD_FAST", "12")),
+                    slow_period=int(os.environ.get("MACD_SLOW", "26")),
+                    signal_period=int(os.environ.get("MACD_SIGNAL", "9")),
+                    quantity=Decimal(os.environ.get("MACD_QUANTITY", "1")),
+                    bar_size=os.environ.get("MACD_BAR_SIZE", "1 hour"),
+                    stop_loss_pct=macd_stop,
+                    take_profit_pct=macd_tp,
+                )
+            )
+
+        for symbol in bb_symbols:
+            registry.register(
+                BollingerBandStrategy(
+                    strategy_id=f"bb-{symbol.lower()}",
+                    symbol=symbol,
+                    period=int(os.environ.get("BB_PERIOD", "20")),
+                    num_std=Decimal(os.environ.get("BB_NUM_STD", "2")),
+                    quantity=Decimal(os.environ.get("BB_QUANTITY", "1")),
+                    bar_size=os.environ.get("BB_BAR_SIZE", "1 hour"),
+                    stop_loss_pct=bb_stop,
+                    take_profit_pct=bb_tp,
+                )
+            )
+
+        for symbol in mom_symbols:
+            registry.register(
+                MomentumStrategy(
+                    strategy_id=f"momentum-{symbol.lower()}",
+                    symbol=symbol,
+                    period=int(os.environ.get("MOM_PERIOD", "14")),
+                    threshold=Decimal(os.environ.get("MOM_THRESHOLD", "2")),
+                    quantity=Decimal(os.environ.get("MOM_QUANTITY", "1")),
+                    bar_size=os.environ.get("MOM_BAR_SIZE", "1 hour"),
+                    stop_loss_pct=mom_stop,
+                    take_profit_pct=mom_tp,
                 )
             )
 

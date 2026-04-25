@@ -24,7 +24,7 @@ class StrategyInfo(BaseModel):
 
 class ValidateRequest(BaseModel):
     model_config = ConfigDict(strict=True)
-    lookback_bars: int = 500
+    lookback_bars: int = 2000
     bar_size: str = "5 mins"
 
 
@@ -40,6 +40,11 @@ class BacktestResultResponse(BaseModel):
     total_return_pct: Decimal
     num_trades: int
     passed: bool
+    sortino_ratio: Decimal = Decimal("0")
+    calmar_ratio: Decimal = Decimal("0")
+    profit_factor: Decimal = Decimal("0")
+    avg_trade_pnl: Decimal = Decimal("0")
+    reward_risk_ratio: Decimal = Decimal("0")
     notes: str | None = None
 
 
@@ -102,6 +107,18 @@ async def validate_strategy(strategy_id: str, body: ValidateRequest, request: Re
         strategy = registry.get(strategy_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
+
+    # Auto-fetch historical data if the store doesn't have enough bars yet.
+    market_data_svc = request.app.state.market_data_svc
+    cached = bar_store.query(strategy.symbol, n=body.lookback_bars, bar_size=body.bar_size)
+    cached_count = len(cached)
+    if cached_count < body.lookback_bars:
+        try:
+            await market_data_svc.get_bars(
+                strategy.symbol, n=body.lookback_bars, bar_size=body.bar_size
+            )
+        except Exception as exc:
+            logger.warning("Auto-fetch for backtest failed: %s", exc)
 
     backtester = Backtester(strategy=strategy, store=bar_store)
     try:

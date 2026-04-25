@@ -30,6 +30,12 @@ class BacktestResult(BaseModel):
     total_return_pct: Decimal  # can be negative
     num_trades: int
     passed: bool
+    # Extended metrics
+    sortino_ratio: Decimal = Decimal("0")       # Sharpe using downside deviation only
+    calmar_ratio: Decimal = Decimal("0")        # annualised return / max drawdown
+    profit_factor: Decimal = Decimal("0")       # gross profit / gross loss (0 = no losers)
+    avg_trade_pnl: Decimal = Decimal("0")       # mean net PnL per trade
+    reward_risk_ratio: Decimal = Decimal("0")   # avg winner / avg loser (0 = no losers)
     notes: str | None = None
 
 

@@ -31,7 +31,12 @@ async def db_factory():
                 total_return_pct TEXT NOT NULL,
                 num_trades INTEGER NOT NULL,
                 passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
-                notes TEXT
+                notes TEXT,
+                sortino_ratio TEXT DEFAULT '0',
+                calmar_ratio TEXT DEFAULT '0',
+                profit_factor TEXT DEFAULT '0',
+                avg_trade_pnl TEXT DEFAULT '0',
+                reward_risk_ratio TEXT DEFAULT '0'
             )
         """))
     return async_sessionmaker(engine, expire_on_commit=False)

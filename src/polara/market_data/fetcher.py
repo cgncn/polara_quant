@@ -22,15 +22,20 @@ _BAR_SIZE_MINUTES: dict[str, int] = {
 
 
 def _duration_for_n_bars(n: int, bar_size: str) -> str:
-    """Return an IB durationStr that covers at least n bars of bar_size."""
+    """Return an IB durationStr that covers at least n bars of bar_size.
+
+    Uses 2× buffer to account for weekends and holidays. IB supports up to
+    '5 Y' for intraday bars and '20 Y' for daily bars.
+    """
     minutes = _BAR_SIZE_MINUTES.get(bar_size, 5)
     total_minutes = n * minutes * 2  # 2x buffer
     if total_minutes <= 1440:
         return f"{max(1, total_minutes // 60 + 1)} D"
     days = total_minutes // 1440 + 1
-    if days <= 30:
+    if days <= 365:
         return f"{days} D"
-    return f"{days // 30 + 1} M"
+    years = days // 365 + 1
+    return f"{years} Y"
 
 
 def _parse_ib_datetime(date_str: str | datetime) -> datetime:

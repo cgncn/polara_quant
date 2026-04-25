@@ -56,6 +56,33 @@ def _compute_max_drawdown(equity: list[Decimal]) -> Decimal:
     return max_dd
 
 
+def _compute_sortino(equity: list[Decimal], bar_size: str) -> Decimal:
+    """Compute annualised Sortino ratio — like Sharpe but uses only downside deviation."""
+    if len(equity) < 3:
+        return Decimal("0")
+
+    returns: list[Decimal] = []
+    for i in range(1, len(equity)):
+        if equity[i - 1] != Decimal("0"):
+            returns.append((equity[i] - equity[i - 1]) / equity[i - 1])
+
+    if len(returns) < 2:
+        return Decimal("0")
+
+    mean_r = sum(returns, Decimal("0")) / Decimal(len(returns))
+    downside = [r for r in returns if r < Decimal("0")]
+    if not downside:
+        return Decimal("0")
+
+    downside_variance = sum(r ** 2 for r in downside) / Decimal(len(downside))
+    if downside_variance <= Decimal("0"):
+        return Decimal("0")
+
+    downside_std = Decimal(str(math.sqrt(float(downside_variance))))
+    ann_factor = Decimal(str(math.sqrt(_periods_per_year(bar_size))))
+    return mean_r / downside_std * ann_factor
+
+
 def _compute_sharpe(equity: list[Decimal], bar_size: str) -> Decimal:
     """Compute annualised Sharpe ratio from an equity curve.
 
@@ -205,6 +232,33 @@ class Backtester:
 
         max_drawdown_pct = _compute_max_drawdown(equity_curve)
         sharpe_ratio = _compute_sharpe(equity_curve, bar_size)
+        sortino_ratio = _compute_sortino(equity_curve, bar_size)
+
+        # Calmar: annualised return / max drawdown (0 when no drawdown)
+        periods_per_year = Decimal(_periods_per_year(bar_size))
+        num_periods = Decimal(max(len(equity_curve) - 1, 1))
+        ann_factor = periods_per_year / num_periods
+        annualised_return = total_return_pct / Decimal("100") * ann_factor * Decimal("100")
+        calmar_ratio = (
+            annualised_return / max_drawdown_pct
+            if max_drawdown_pct > Decimal("0")
+            else Decimal("0")
+        )
+
+        # Profit factor, avg trade PnL, reward/risk
+        winning_trades = [t for t in trades if t.pnl > Decimal("0")]
+        losing_trades = [t for t in trades if t.pnl < Decimal("0")]
+        gross_profit = sum((t.pnl for t in winning_trades), Decimal("0"))
+        gross_loss = sum((abs(t.pnl) for t in losing_trades), Decimal("0"))
+        profit_factor = gross_profit / gross_loss if gross_loss > Decimal("0") else Decimal("0")
+        avg_trade_pnl = (
+            sum((t.pnl for t in trades), Decimal("0")) / Decimal(num_trades)
+            if num_trades > 0
+            else Decimal("0")
+        )
+        avg_win = gross_profit / Decimal(len(winning_trades)) if winning_trades else Decimal("0")
+        avg_loss = gross_loss / Decimal(len(losing_trades)) if losing_trades else Decimal("0")
+        reward_risk_ratio = avg_win / avg_loss if avg_loss > Decimal("0") else Decimal("0")
 
         passed = (sharpe_ratio >= self._min_sharpe) and (
             max_drawdown_pct <= self._max_drawdown_pct
@@ -221,6 +275,11 @@ class Backtester:
             total_return_pct=total_return_pct,
             num_trades=num_trades,
             passed=passed,
+            sortino_ratio=sortino_ratio,
+            calmar_ratio=calmar_ratio,
+            profit_factor=profit_factor,
+            avg_trade_pnl=avg_trade_pnl,
+            reward_risk_ratio=reward_risk_ratio,
         )
 
 

@@ -7,21 +7,35 @@ from sqlalchemy import text
 
 from polara.backtester.schemas import BacktestResult
 
+_MIGRATE = [
+    text("ALTER TABLE backtest_results ADD COLUMN sortino_ratio TEXT DEFAULT '0'"),
+    text("ALTER TABLE backtest_results ADD COLUMN calmar_ratio TEXT DEFAULT '0'"),
+    text("ALTER TABLE backtest_results ADD COLUMN profit_factor TEXT DEFAULT '0'"),
+    text("ALTER TABLE backtest_results ADD COLUMN avg_trade_pnl TEXT DEFAULT '0'"),
+    text("ALTER TABLE backtest_results ADD COLUMN reward_risk_ratio TEXT DEFAULT '0'"),
+]
+
 _INSERT = text("""
     INSERT INTO backtest_results
         (id, strategy_id, run_at, bar_size, num_bars,
          sharpe_ratio, max_drawdown_pct, win_rate_pct,
-         total_return_pct, num_trades, passed, notes)
+         total_return_pct, num_trades, passed, notes,
+         sortino_ratio, calmar_ratio, profit_factor,
+         avg_trade_pnl, reward_risk_ratio)
     VALUES
         (:id, :strategy_id, :run_at, :bar_size, :num_bars,
          :sharpe_ratio, :max_drawdown_pct, :win_rate_pct,
-         :total_return_pct, :num_trades, :passed, :notes)
+         :total_return_pct, :num_trades, :passed, :notes,
+         :sortino_ratio, :calmar_ratio, :profit_factor,
+         :avg_trade_pnl, :reward_risk_ratio)
 """)
 
 _SELECT_BY_STRATEGY = text("""
     SELECT id, strategy_id, run_at, bar_size, num_bars,
            sharpe_ratio, max_drawdown_pct, win_rate_pct,
-           total_return_pct, num_trades, passed, notes
+           total_return_pct, num_trades, passed, notes,
+           sortino_ratio, calmar_ratio, profit_factor,
+           avg_trade_pnl, reward_risk_ratio
     FROM backtest_results
     WHERE strategy_id = :strategy_id
     ORDER BY run_at DESC
@@ -39,6 +53,16 @@ class BacktestService:
 
     def __init__(self, db_session_factory) -> None:
         self._db = db_session_factory
+
+    async def migrate(self) -> None:
+        """Add new metric columns if they don't exist yet (idempotent)."""
+        async with self._db() as db:
+            for stmt in _MIGRATE:
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    await db.rollback()  # column already exists — skip
 
     async def save(self, result: BacktestResult) -> None:
         """Persist a BacktestResult to the database."""
@@ -58,6 +82,11 @@ class BacktestService:
                     "num_trades": result.num_trades,
                     "passed": 1 if result.passed else 0,
                     "notes": result.notes,
+                    "sortino_ratio": str(result.sortino_ratio),
+                    "calmar_ratio": str(result.calmar_ratio),
+                    "profit_factor": str(result.profit_factor),
+                    "avg_trade_pnl": str(result.avg_trade_pnl),
+                    "reward_risk_ratio": str(result.reward_risk_ratio),
                 },
             )
             await db.commit()
@@ -90,6 +119,11 @@ class BacktestService:
                 num_trades=row[9],
                 passed=bool(row[10]),
                 notes=row[11],
+                sortino_ratio=Decimal(row[12]) if row[12] is not None else Decimal("0"),
+                calmar_ratio=Decimal(row[13]) if row[13] is not None else Decimal("0"),
+                profit_factor=Decimal(row[14]) if row[14] is not None else Decimal("0"),
+                avg_trade_pnl=Decimal(row[15]) if row[15] is not None else Decimal("0"),
+                reward_risk_ratio=Decimal(row[16]) if row[16] is not None else Decimal("0"),
             )
             for row in rows
         ]

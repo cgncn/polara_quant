@@ -51,15 +51,48 @@ services:
       - MA_TAKE_PROFIT_PCT=8
 
       # ── RSI Mean-Reversion ──────────────────────────────────────────────────
-      - RSI_SYMBOLS=PLTR,COIN,SMCI,MSTR
+      # PLTR only: 30/70 thresholds improved Sharpe from -0.17 to +0.26 vs 25/75.
+      # COIN/SMCI/MSTR showed no RSI edge at any threshold tested.
+      - RSI_SYMBOLS=PLTR
       - RSI_BAR_SIZE=1 hour
       - RSI_PERIOD=14
-      # Tighter oversold/overbought bands for hourly bars (more selective).
-      - RSI_OVERSOLD=25
-      - RSI_OVERBOUGHT=75
+      - RSI_OVERSOLD=30
+      - RSI_OVERBOUGHT=70
       - RSI_QUANTITY=1
       - RSI_STOP_LOSS_PCT=3
       - RSI_TAKE_PROFIT_PCT=8
+
+      # ── MACD Crossover ──────────────────────────────────────────────────────
+      # Classic trend-following: fast EMA(12) - slow EMA(26), signal EMA(9).
+      - MACD_SYMBOLS=PLTR,COIN,SMCI,MSTR
+      - MACD_BAR_SIZE=1 hour
+      - MACD_FAST=12
+      - MACD_SLOW=26
+      - MACD_SIGNAL=9
+      - MACD_QUANTITY=1
+      - MACD_STOP_LOSS_PCT=3
+      - MACD_TAKE_PROFIT_PCT=8
+
+      # ── Bollinger Band Mean Reversion ───────────────────────────────────────
+      # PLTR only: BB has zero edge on COIN/SMCI/MSTR (trending/collapsing names).
+      # std=2.5 upgrades Sharpe from 1.14 → 1.90 and win rate from 72% → 87%.
+      - BB_SYMBOLS=PLTR
+      - BB_BAR_SIZE=1 hour
+      - BB_PERIOD=20
+      - BB_NUM_STD=2.5
+      - BB_QUANTITY=1
+      - BB_STOP_LOSS_PCT=3
+      - BB_TAKE_PROFIT_PCT=8
+
+      # ── Rate-of-Change Momentum ─────────────────────────────────────────────
+      # Buy/sell when 14-bar ROC breaks through ±2% threshold.
+      - MOM_SYMBOLS=PLTR,COIN,SMCI,MSTR
+      - MOM_BAR_SIZE=1 hour
+      - MOM_PERIOD=14
+      - MOM_THRESHOLD=2
+      - MOM_QUANTITY=1
+      - MOM_STOP_LOSS_PCT=3
+      - MOM_TAKE_PROFIT_PCT=8
 
     depends_on:
       - ib-gateway
