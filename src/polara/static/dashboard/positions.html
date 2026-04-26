@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polara — Positions</title>
+  <link rel="stylesheet" href="/static/dashboard/base.css">
+  <style>
+    .refresh-note {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-left: auto;
+    }
+    .upnl-col { font-weight: 700; }
+    .last-updated {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: right;
+      margin-top: 8px;
+    }
+    .open-orders-wrap { margin-top: 24px; }
+  </style>
+</head>
+<body>
+<div id="status-bar-mount"></div>
+<div id="nav-mount"></div>
+
+<div class="page">
+  <div class="page-header">
+    <h1>Positions</h1>
+    <div class="subtitle">Live open positions · refreshes every 10 seconds</div>
+  </div>
+
+  <div class="cards" id="pos-kpis">
+    <div class="card"><div class="label">Open Positions</div><div class="value neutral" id="kpi-count">—</div></div>
+    <div class="card"><div class="label">Unrealised P&L</div><div class="value" id="kpi-upnl">—</div></div>
+    <div class="card"><div class="label">Long Exposure</div><div class="value neutral" id="kpi-long">—</div></div>
+    <div class="card"><div class="label">Short Exposure</div><div class="value neutral" id="kpi-short">—</div></div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-header">
+      <h2>Open Positions</h2>
+      <span class="refresh-note" id="refresh-note">—</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th>
+          <th>Entry</th><th>Last</th><th>Unreal P&L</th><th>Entry Time</th>
+        </tr>
+      </thead>
+      <tbody id="positions-body">
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="open-orders-wrap">
+    <div class="table-wrap">
+      <div class="table-header">
+        <h2>Open Trades (Pending Close)</h2>
+        <span class="dim" id="open-count"></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th>
+            <th>Entry Price</th><th>Entry Time</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="open-trades-body">
+          <tr><td colspan="7" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="/static/dashboard/base.js"></script>
+<script>
+document.getElementById('status-bar-mount').innerHTML = statusBar();
+document.getElementById('nav-mount').innerHTML = nav('Positions');
+init();
+
+async function loadPositions() {
+  const trades = await (await fetch('/dashboard/api/trades?limit=500')).json();
+  const open = trades.filter(t => t.status === 'open');
+
+  document.getElementById('kpi-count').textContent = open.length;
+  document.getElementById('open-count').textContent = `${open.length} open`;
+
+  let totalUpnl = 0;
+  let longExp = 0, shortExp = 0;
+
+  const tbody = document.getElementById('positions-body');
+  if (!open.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No open positions</td></tr>';
+  } else {
+    tbody.innerHTML = open.map(t => {
+      const upnl = t.unrealised_pnl !== null && t.unrealised_pnl !== undefined
+        ? parseFloat(t.unrealised_pnl) : null;
+      if (upnl !== null) totalUpnl += upnl;
+      const qty = parseFloat(t.quantity || 0);
+      const entry = parseFloat(t.entry_price || 0);
+      if (t.side === 'buy') longExp += qty * entry;
+      else shortExp += qty * entry;
+
+      return `<tr>
+        <td class="dim">${t.strategy_id}</td>
+        <td><strong>${t.symbol}</strong></td>
+        <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+        <td>${fmt.price(t.quantity)}</td>
+        <td>${fmt.price(t.entry_price)}</td>
+        <td class="dim">—</td>
+        <td class="upnl-col ${upnl !== null ? pnlClass(upnl) : 'dim'}">
+          ${upnl !== null ? fmt.pnl(upnl) : '—'}
+        </td>
+        <td class="dim">${fmt.time(t.entry_at)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const upnlEl = document.getElementById('kpi-upnl');
+  upnlEl.textContent = open.length ? fmt.pnl(totalUpnl) : '—';
+  upnlEl.className = 'value ' + (open.length ? pnlClass(totalUpnl) : 'neutral');
+
+  document.getElementById('kpi-long').textContent = longExp ? longExp.toFixed(0) : '—';
+  document.getElementById('kpi-short').textContent = shortExp ? shortExp.toFixed(0) : '—';
+
+  const openTbody = document.getElementById('open-trades-body');
+  if (!open.length) {
+    openTbody.innerHTML = '<tr><td colspan="7" class="empty">No open trades</td></tr>';
+  } else {
+    openTbody.innerHTML = open.map(t => `<tr>
+      <td class="dim">${t.strategy_id}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+      <td>${fmt.price(t.quantity)}</td>
+      <td>${fmt.price(t.entry_price)}</td>
+      <td class="dim">${fmt.time(t.entry_at)}</td>
+      <td><span class="badge open">OPEN</span></td>
+    </tr>`).join('');
+  }
+
+  document.getElementById('refresh-note').textContent =
+    'Updated ' + new Date().toUTCString().slice(17, 25) + ' UTC';
+}
+
+loadPositions();
+setInterval(loadPositions, 10_000);
+</script>
+</body>
+</html>

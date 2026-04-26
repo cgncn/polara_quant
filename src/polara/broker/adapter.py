@@ -85,11 +85,14 @@ class BrokerAdapter:
         self,
         ib_client: IBClient,
         db_session_factory: Callable[[], Any],
+        trade_service: Any | None = None,
     ) -> None:
         self._client = ib_client
         self._db_factory = db_session_factory
+        self._trade_svc = trade_service
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._account_cache: tuple[datetime, AccountInfo] | None = None
+        self._known_filled: set[int] = set()  # ib_order_ids already recorded as fills
 
     # ── connection status ──────────────────────────────────────────────────────
 
@@ -460,6 +463,13 @@ class BrokerAdapter:
                         )
                         await db.commit()
                     logger.debug("P&L snapshot saved at %s", snapshot.snapshot_at)
+                    if self._trade_svc is not None:
+                        try:
+                            await self._trade_svc.record_nav(
+                                snapshot.net_liquidation, snapshot.snapshot_at
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("NAV record failed: %s", exc)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("P&L snapshot failed: %s", exc)
             await asyncio.sleep(_PNL_SNAPSHOT_INTERVAL_SECONDS)
@@ -505,19 +515,80 @@ class BrokerAdapter:
     async def _sync_open_orders(self) -> None:
         resp = await self._client.cp.list_orders()
         orders_data = resp.get("orders") or []
+        now = datetime.now(UTC)
         async with self._db_factory() as db:
             for o in orders_data:
                 ib_id = o.get("orderId")
                 raw_status = o.get("status", "")
                 our_status = _STATUS_MAP.get(raw_status)
-                if ib_id and our_status:
-                    await db.execute(
-                        text(
-                            "UPDATE orders SET status = :status WHERE ib_order_id = :ib_oid"
-                        ),
-                        {"status": our_status, "ib_oid": int(ib_id)},
-                    )
+                if not ib_id or not our_status:
+                    continue
+                await db.execute(
+                    text("UPDATE orders SET status = :status WHERE ib_order_id = :ib_oid"),
+                    {"status": our_status, "ib_oid": int(ib_id)},
+                )
+                # Record trade open/close on new fills
+                is_new_fill = our_status == "filled" and int(ib_id) not in self._known_filled
+                if is_new_fill and self._trade_svc:
+                    self._known_filled.add(int(ib_id))
+                    try:
+                        await self._record_fill(db, o, now)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("trade record failed for ib_id=%s: %s", ib_id, exc)
             await db.commit()
+
+    async def _record_fill(self, db: Any, order_data: dict, filled_at: datetime) -> None:
+        """Open or close a trade record when an IB order fills."""
+        ib_id = int(order_data["orderId"])
+        avg_price_raw = order_data.get("avgPrice") or order_data.get("price", "0")
+        avg_price = Decimal(str(avg_price_raw))
+        qty = Decimal(str(order_data.get("filledQuantity") or order_data.get("quantity", "0")))
+        if avg_price <= 0 or qty <= 0:
+            return
+
+        # Look up our order record
+        row = (await db.execute(
+            text(
+                "SELECT order_id, symbol, side, strategy_id"
+                " FROM orders WHERE ib_order_id = :ib_id"
+            ),
+            {"ib_id": ib_id},
+        )).fetchone()
+        if not row:
+            return
+
+        order_id = row.order_id
+
+        # Check if this is a bracket child (exit leg) by looking in bracket_orders
+        bracket = (await db.execute(
+            text(
+                "SELECT order_id FROM bracket_orders "
+                "WHERE stop_ib_id = :ib OR take_profit_ib_id = :ib"
+            ),
+            {"ib": ib_id},
+        )).fetchone()
+
+        if bracket:
+            # Exit fill — close the trade opened by the parent order
+            await self._trade_svc.close_trade(
+                entry_order_id=bracket.order_id,
+                exit_order_id=order_id,
+                exit_price=avg_price,
+                commission=Decimal("1"),
+                exit_at=filled_at,
+            )
+        else:
+            # Entry fill — open a new trade
+            await self._trade_svc.open_trade(
+                entry_order_id=order_id,
+                strategy_id=row.strategy_id,
+                symbol=row.symbol,
+                side=row.side,
+                quantity=qty,
+                entry_price=avg_price,
+                commission=Decimal("1"),
+                entry_at=filled_at,
+            )
 
     # ── helpers ────────────────────────────────────────────────────────────────
 

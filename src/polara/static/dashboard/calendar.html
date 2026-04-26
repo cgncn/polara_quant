@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polara — Calendar</title>
+  <link rel="stylesheet" href="/static/dashboard/base.css">
+  <style>
+    .cal-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .cal-header h2 { font-family: var(--mono); font-size: 16px; }
+    .cal-nav button {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .cal-nav button:hover { background: var(--bg-hover); }
+
+    .calendar {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+    }
+    .cal-day-name {
+      padding: 10px;
+      text-align: center;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .cal-cell {
+      min-height: 72px;
+      padding: 8px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+      position: relative;
+    }
+    .cal-cell:nth-child(7n) { border-right: none; }
+    .cal-cell:hover { background: var(--bg-hover); }
+    .cal-cell.empty { cursor: default; background: transparent; }
+    .cal-cell.today { outline: 1px solid var(--accent); outline-offset: -1px; }
+    .cal-cell.selected { background: var(--bg-hover); }
+
+    .cal-cell .day-num {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    .cal-cell.today .day-num { color: var(--accent); font-weight: 700; }
+
+    .cal-cell .day-pnl {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .cal-cell .day-trades {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+    .cal-cell.profit  { background: rgba(34,197,94,0.07); }
+    .cal-cell.loss    { background: rgba(239,68,68,0.07); }
+    .cal-cell.profit:hover { background: rgba(34,197,94,0.13); }
+    .cal-cell.loss:hover   { background: rgba(239,68,68,0.13); }
+  </style>
+</head>
+<body>
+<div id="status-bar-mount"></div>
+<div id="nav-mount"></div>
+
+<div class="page">
+  <div class="page-header">
+    <h1>Calendar</h1>
+    <div class="subtitle">Click any day to see its trades</div>
+  </div>
+
+  <div class="cal-header">
+    <div class="cal-nav">
+      <button onclick="prevMonth()">← Prev</button>
+      <button onclick="nextMonth()">Next →</button>
+    </div>
+    <h2 id="cal-month-label">—</h2>
+  </div>
+
+  <div class="calendar">
+    <div class="cal-grid" id="cal-day-names"></div>
+    <div class="cal-grid" id="cal-cells"></div>
+  </div>
+
+  <div class="table-wrap" id="day-detail" style="display:none">
+    <div class="table-header">
+      <h2 id="detail-date">—</h2>
+      <span id="detail-stats" class="dim"></span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy</th><th>Symbol</th><th>Side</th>
+          <th>Entry</th><th>Exit</th><th>P&L</th><th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="detail-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="/static/dashboard/base.js"></script>
+<script>
+document.getElementById('status-bar-mount').innerHTML = statusBar();
+document.getElementById('nav-mount').innerHTML = nav('Calendar');
+init();
+
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let currentYear, currentMonth;
+let historyMap = {};
+
+async function loadHistory() {
+  const data = await (await fetch('/dashboard/api/pnl/history?days=365')).json();
+  historyMap = {};
+  data.forEach(d => { historyMap[d.date] = d; });
+}
+
+function renderCalendar() {
+  const label = new Date(currentYear, currentMonth).toLocaleDateString('en-US', { month:'long', year:'numeric' });
+  document.getElementById('cal-month-label').textContent = label;
+
+  const namesEl = document.getElementById('cal-day-names');
+  namesEl.innerHTML = DAYS.map(d => `<div class="cal-day-name">${d}</div>`).join('');
+
+  const firstDay = new Date(currentYear, currentMonth, 1);
+  // Monday-based: Mon=0
+  let startOffset = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const cells = document.getElementById('cal-cells');
+  let html = '';
+  for (let i = 0; i < startOffset; i++) html += `<div class="cal-cell empty"></div>`;
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const d = historyMap[dateStr];
+    const isToday = dateStr === todayStr;
+    const pnl = d ? parseFloat(d.net_pnl) : null;
+    const cls = [
+      'cal-cell',
+      isToday ? 'today' : '',
+      d && pnl > 0 ? 'profit' : '',
+      d && pnl < 0 ? 'loss' : '',
+    ].filter(Boolean).join(' ');
+
+    html += `
+      <div class="${cls}" onclick="selectDay('${dateStr}')">
+        <div class="day-num">${day}</div>
+        ${d ? `
+          <div class="day-pnl ${pnlClass(d.net_pnl)}">${fmt.pnl(d.net_pnl)}</div>
+          <div class="day-trades">${d.trade_count}t · ${fmt.pct(d.win_rate)} wr</div>
+        ` : ''}
+      </div>`;
+  }
+  cells.innerHTML = html;
+}
+
+async function selectDay(dateStr) {
+  document.querySelectorAll('.cal-cell').forEach(c => c.classList.remove('selected'));
+  event?.target?.closest('.cal-cell')?.classList.add('selected');
+
+  const trades = await (await fetch(`/dashboard/api/trades?date=${dateStr}`)).json();
+  const detail = document.getElementById('day-detail');
+  const d = historyMap[dateStr];
+
+  document.getElementById('detail-date').textContent = dateStr;
+  if (d) {
+    document.getElementById('detail-stats').textContent =
+      `${fmt.pnl(d.net_pnl)} · ${d.trade_count} trades · ${fmt.pct(d.win_rate)} win rate`;
+  }
+
+  const tbody = document.getElementById('detail-body');
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No trades this day</td></tr>';
+  } else {
+    tbody.innerHTML = trades.map(t => {
+      const hasPnl = t.realised_pnl !== null && t.realised_pnl !== undefined;
+      return `<tr>
+        <td class="dim">${t.strategy_id}</td>
+        <td><strong>${t.symbol}</strong></td>
+        <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+        <td>${fmt.price(t.entry_price)}</td>
+        <td>${fmt.price(t.exit_price)}</td>
+        <td class="${hasPnl ? pnlClass(t.realised_pnl) : 'dim'}">${hasPnl ? fmt.pnl(t.realised_pnl) : '—'}</td>
+        <td class="dim">${fmt.time(t.entry_at)}</td>
+      </tr>`;
+    }).join('');
+  }
+  detail.style.display = 'block';
+}
+
+function prevMonth() { currentMonth--; if (currentMonth < 0) { currentMonth = 11; currentYear--; } renderCalendar(); }
+function nextMonth() { currentMonth++; if (currentMonth > 11) { currentMonth = 0; currentYear++; } renderCalendar(); }
+
+async function main() {
+  const now = new Date();
+  currentYear = now.getFullYear();
+  currentMonth = now.getMonth();
+  await loadHistory();
+  renderCalendar();
+}
+main();
+</script>
+</body>
+</html>

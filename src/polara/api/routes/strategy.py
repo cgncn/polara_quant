@@ -120,7 +120,10 @@ async def validate_strategy(strategy_id: str, body: ValidateRequest, request: Re
         except Exception as exc:
             logger.warning("Auto-fetch for backtest failed: %s", exc)
 
-    backtester = Backtester(strategy=strategy, store=bar_store)
+    position_size_usd = getattr(request.app.state, "position_size_usd", None)
+    backtester = Backtester(
+        strategy=strategy, store=bar_store, position_size_usd=position_size_usd
+    )
     try:
         result = await asyncio.to_thread(
             backtester.run,

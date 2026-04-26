@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polara — Strategies</title>
+  <link rel="stylesheet" href="/static/dashboard/base.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    .strategy-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .strategy-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .strategy-card:hover { border-color: var(--accent-dim); background: var(--bg-hover); }
+    .strategy-card.active { border-color: var(--accent); }
+    .strategy-card .s-name {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+    .strategy-card .s-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .strategy-card .s-stat { }
+    .strategy-card .s-stat .lbl {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .strategy-card .s-stat .val {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .pf-bar {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+    .pf-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.4s;
+    }
+    .symbol-row td:first-child { font-family: var(--mono); font-weight: 700; }
+  </style>
+</head>
+<body>
+<div id="status-bar-mount"></div>
+<div id="nav-mount"></div>
+
+<div class="page">
+  <div class="page-header">
+    <h1>Strategies</h1>
+    <div class="subtitle">Click a strategy card to filter its symbol breakdown and trades</div>
+  </div>
+
+  <div class="strategy-grid" id="strategy-cards">
+    <div class="dim" style="font-family:var(--mono);font-size:12px;padding:24px">Loading…</div>
+  </div>
+
+  <div class="grid-2" style="margin-bottom:24px">
+    <div class="table-wrap">
+      <div class="table-header">
+        <h2>Symbol Breakdown</h2>
+        <span id="symbol-strategy-label" class="dim">All strategies</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Trades</th><th>Win%</th>
+            <th>Avg Win</th><th>Avg Loss</th><th>Net P&L</th>
+          </tr>
+        </thead>
+        <tbody id="symbol-body">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="chart-wrap" style="margin-bottom:0">
+      <h2 id="chart-label">Net P&L by Strategy</h2>
+      <canvas id="strategy-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-header">
+      <h2>Recent Trades</h2>
+      <span id="trade-strategy-label" class="dim">All strategies</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>Strategy</th><th>Symbol</th><th>Side</th>
+          <th>Entry</th><th>Exit</th><th>P&L</th><th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="trades-body">
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="/static/dashboard/base.js"></script>
+<script>
+document.getElementById('status-bar-mount').innerHTML = statusBar();
+document.getElementById('nav-mount').innerHTML = nav('Strategies');
+init();
+
+let strategyData = [];
+let symbolData = [];
+let activeStrategy = null;
+let chartInstance = null;
+
+async function loadStrategies() {
+  strategyData = await (await fetch('/dashboard/api/strategy/performance')).json();
+  symbolData = await (await fetch('/dashboard/api/symbol/performance')).json();
+  renderStrategyCards();
+  renderSymbolTable(symbolData);
+  renderChart(strategyData);
+  await loadTrades(null);
+}
+
+function renderStrategyCards() {
+  const el = document.getElementById('strategy-cards');
+  if (!strategyData.length) {
+    el.innerHTML = '<div class="dim" style="font-family:var(--mono);font-size:12px;padding:24px">No strategy data yet</div>';
+    return;
+  }
+  const maxPnl = Math.max(...strategyData.map(s => Math.abs(parseFloat(s.net_pnl || 0))), 1);
+  el.innerHTML = strategyData.map(s => {
+    const pnl = parseFloat(s.net_pnl || 0);
+    const wr = parseFloat(s.win_rate || 0);
+    const pf = parseFloat(s.profit_factor || 0);
+    const pfPct = Math.min((pf / 3) * 100, 100);
+    return `
+      <div class="strategy-card" onclick="selectStrategy('${s.strategy_id}')">
+        <div class="s-name">${s.strategy_id}</div>
+        <div class="s-stats">
+          <div class="s-stat">
+            <div class="lbl">Net P&L</div>
+            <div class="val ${pnlClass(pnl)}">${fmt.pnl(pnl)}</div>
+          </div>
+          <div class="s-stat">
+            <div class="lbl">Win Rate</div>
+            <div class="val ${wr >= 50 ? 'up' : 'down'}">${fmt.pct(wr)}</div>
+          </div>
+          <div class="s-stat">
+            <div class="lbl">Trades</div>
+            <div class="val neutral">${s.trade_count}</div>
+          </div>
+          <div class="s-stat">
+            <div class="lbl">Prof. Factor</div>
+            <div class="val ${pf >= 1 ? 'up' : 'down'}">${pf.toFixed(2)}</div>
+          </div>
+        </div>
+        <div class="pf-bar"><div class="pf-bar-fill" style="width:${pfPct}%"></div></div>
+      </div>`;
+  }).join('');
+}
+
+function renderSymbolTable(rows) {
+  const tbody = document.getElementById('symbol-body');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No data</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr class="symbol-row">
+      <td>${r.symbol}</td>
+      <td>${r.trade_count}</td>
+      <td class="${parseFloat(r.win_rate) >= 50 ? 'up' : 'down'}">${fmt.pct(r.win_rate)}</td>
+      <td class="up">${fmt.pnl(r.avg_win)}</td>
+      <td class="down">${fmt.pnl(r.avg_loss)}</td>
+      <td class="${pnlClass(r.net_pnl)}">${fmt.pnl(r.net_pnl)}</td>
+    </tr>`).join('');
+}
+
+function renderChart(rows) {
+  const canvas = document.getElementById('strategy-chart');
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+  if (!rows.length) return;
+  const labels = rows.map(r => r.strategy_id);
+  const data = rows.map(r => parseFloat(r.net_pnl || 0));
+  const colors = data.map(v => v >= 0 ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)');
+  chartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4, borderSkipped: false }] },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: '#1e1e30' }, ticks: { color: '#64748b', font: { family: 'monospace', size: 10 } } },
+        y: { grid: { color: '#1e1e30' }, ticks: { color: '#64748b', font: { family: 'monospace', size: 10 } } },
+      }
+    }
+  });
+}
+
+async function loadTrades(strategy) {
+  const url = strategy
+    ? `/dashboard/api/trades?strategy=${encodeURIComponent(strategy)}&limit=100`
+    : '/dashboard/api/trades?limit=100';
+  const trades = await (await fetch(url)).json();
+  const tbody = document.getElementById('trades-body');
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No trades</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map(t => {
+    const hasPnl = t.realised_pnl !== null && t.realised_pnl !== undefined;
+    return `<tr>
+      <td class="dim">${fmt.date(t.entry_at)}</td>
+      <td class="dim">${t.strategy_id}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+      <td>${fmt.price(t.entry_price)}</td>
+      <td>${fmt.price(t.exit_price)}</td>
+      <td class="${hasPnl ? pnlClass(t.realised_pnl) : 'dim'}">${hasPnl ? fmt.pnl(t.realised_pnl) : '—'}</td>
+      <td class="dim">${fmt.time(t.entry_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function selectStrategy(id) {
+  if (activeStrategy === id) {
+    activeStrategy = null;
+    document.querySelectorAll('.strategy-card').forEach(c => c.classList.remove('active'));
+    document.getElementById('symbol-strategy-label').textContent = 'All strategies';
+    document.getElementById('trade-strategy-label').textContent = 'All strategies';
+    document.getElementById('chart-label').textContent = 'Net P&L by Strategy';
+    renderSymbolTable(symbolData);
+    renderChart(strategyData);
+    loadTrades(null);
+  } else {
+    activeStrategy = id;
+    document.querySelectorAll('.strategy-card').forEach(c => {
+      c.classList.toggle('active', c.querySelector('.s-name').textContent === id);
+    });
+    document.getElementById('symbol-strategy-label').textContent = id;
+    document.getElementById('trade-strategy-label').textContent = id;
+    document.getElementById('chart-label').textContent = `${id} — P&L by Strategy`;
+    const filtered = symbolData.filter(r => r.strategy_id === id || !r.strategy_id);
+    renderSymbolTable(filtered.length ? filtered : symbolData);
+    const row = strategyData.find(r => r.strategy_id === id);
+    renderChart(row ? [row] : strategyData);
+    loadTrades(id);
+  }
+}
+
+loadStrategies();
+</script>
+</body>
+</html>

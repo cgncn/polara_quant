@@ -131,17 +131,30 @@ class Backtester:
         min_sharpe: Decimal = PASS_MIN_SHARPE,
         max_drawdown_pct: Decimal = PASS_MAX_DRAWDOWN_PCT,
         commission_per_side: Decimal = IBKR_COMMISSION_MIN,
+        position_size_usd: Decimal | None = None,
     ) -> None:
         self._strategy = strategy
         self._store = store
         self._min_sharpe = min_sharpe
         self._max_drawdown_pct = max_drawdown_pct
         self._commission_per_side = commission_per_side
+        self._position_size_usd = position_size_usd
+
+    def _get_commission(self, shares: int) -> Decimal:
+        """Commission for one side of a trade.
+
+        Uses _commission(shares) when position_size_usd drives share count;
+        falls back to self._commission_per_side (which tests may override to 0).
+        """
+        if self._position_size_usd is not None:
+            return _commission(shares)
+        return self._commission_per_side
 
     def run(self, *, symbol: str, bar_size: str, lookback_bars: int) -> BacktestResult:
         """Run the backtest and return a BacktestResult.
 
         Fills are simulated at the *open* of the bar after the signal bar.
+        When position_size_usd is set, shares = floor(usd / fill_price), min 1.
         """
         bars = self._store.query(symbol, n=lookback_bars, bar_size=bar_size)
         # Need strategy.bars_needed bars for first signal, plus at least 1 fill bar.
@@ -152,7 +165,7 @@ class Backtester:
             )
 
         cash = STARTING_CAPITAL
-        # position = None or dict with keys side, entry_price, entry_idx
+        # position = None or dict with keys side, entry_price, entry_idx, shares
         position: dict | None = None
         equity_curve: list[Decimal] = [cash]
         trades: list[BacktestTrade] = []
@@ -167,17 +180,22 @@ class Backtester:
 
             if signal is not None:
                 if signal.strength > Decimal("0") and position is None:
-                    # Enter long position — pay entry commission immediately.
-                    cash -= self._commission_per_side
+                    shares = (
+                        max(1, int(self._position_size_usd / fill_price))
+                        if self._position_size_usd is not None
+                        else 1
+                    )
+                    cash -= self._get_commission(shares)
                     position = {
                         "side": "buy",
                         "entry_price": fill_price,
                         "entry_idx": i + 1,
+                        "shares": shares,
                     }
                 elif signal.strength < Decimal("0") and position is not None:
-                    # Exit long position — pay exit commission; pnl is gross of commissions.
-                    gross_pnl = fill_price - position["entry_price"]
-                    net_pnl = gross_pnl - self._commission_per_side
+                    shares = position["shares"]
+                    gross_pnl = (fill_price - position["entry_price"]) * Decimal(shares)
+                    net_pnl = gross_pnl - self._get_commission(shares)
                     trades.append(
                         BacktestTrade(
                             entry_bar_index=position["entry_idx"],
@@ -185,15 +203,16 @@ class Backtester:
                             side="buy",
                             entry_price=position["entry_price"],
                             exit_price=fill_price,
-                            pnl=net_pnl,  # net of both commissions
+                            pnl=net_pnl,
                         )
                     )
-                    cash += gross_pnl - self._commission_per_side
+                    cash += gross_pnl - self._get_commission(shares)
                     position = None
 
             # Mark-to-market equity at current bar close
             if position is not None:
-                mtm = cash + (bars[i].close - position["entry_price"])
+                shares = position["shares"]
+                mtm = cash + (bars[i].close - position["entry_price"]) * Decimal(shares)
             else:
                 mtm = cash
             equity_curve.append(mtm)
@@ -201,8 +220,9 @@ class Backtester:
         # Close any remaining open position at the last bar's close
         if position is not None:
             last_price = bars[-1].close
-            gross_pnl = last_price - position["entry_price"]
-            net_pnl = gross_pnl - self._commission_per_side
+            shares = position["shares"]
+            gross_pnl = (last_price - position["entry_price"]) * Decimal(shares)
+            net_pnl = gross_pnl - self._get_commission(shares)
             trades.append(
                 BacktestTrade(
                     entry_bar_index=position["entry_idx"],
@@ -213,7 +233,7 @@ class Backtester:
                     pnl=net_pnl,
                 )
             )
-            cash += gross_pnl - self._commission_per_side
+            cash += gross_pnl - self._get_commission(shares)
 
         equity_curve.append(cash)
 

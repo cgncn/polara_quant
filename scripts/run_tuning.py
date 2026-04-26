@@ -21,6 +21,7 @@ from polara.schemas.market import Bar
 SYMBOLS = ["PLTR", "COIN", "SMCI", "MSTR"]
 BAR_SIZE = "1 hour"
 LOOKBACK = 2000
+POSITION_SIZE_USD = Decimal("120")
 _bar_cache: dict[str, list[Bar]] = {}
 
 
@@ -55,9 +56,9 @@ def make_store(bars):
 
 def backtest(strategy, bars) -> BacktestResult | None:
     try:
-        return Backtester(strategy=strategy, store=make_store(bars)).run(
-            symbol=strategy.symbol, bar_size=BAR_SIZE, lookback_bars=len(bars)
-        )
+        return Backtester(
+            strategy=strategy, store=make_store(bars), position_size_usd=POSITION_SIZE_USD
+        ).run(symbol=strategy.symbol, bar_size=BAR_SIZE, lookback_bars=len(bars))
     except ValueError:
         return None
 

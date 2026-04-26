@@ -24,6 +24,7 @@ from polara.schemas.market import Bar
 SYMBOLS = ["PLTR", "COIN", "SMCI", "MSTR"]
 BAR_SIZE = "1 hour"
 LOOKBACK_BARS = 2000
+POSITION_SIZE_USD = Decimal("120")
 
 
 def fetch_bars(symbol: str, n: int) -> list[Bar]:
@@ -136,7 +137,9 @@ def run() -> None:
 
         for strategy in make_strategies(symbol):
             store = make_store(bars)
-            backtester = Backtester(strategy=strategy, store=store)
+            backtester = Backtester(
+                strategy=strategy, store=store, position_size_usd=POSITION_SIZE_USD
+            )
             try:
                 result = backtester.run(symbol=symbol, bar_size=BAR_SIZE, lookback_bars=len(bars))
                 all_results.append((strategy.strategy_id, symbol, result))

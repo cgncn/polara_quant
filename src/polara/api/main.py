@@ -7,14 +7,18 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from polara.api.routes.broker import router as broker_router
+from polara.api.routes.dashboard import router as dashboard_router
 from polara.api.routes.health import router as health_router
 from polara.api.routes.market_data import router as market_data_router
 from polara.api.routes.strategy import router as strategy_router
 from polara.backtester.service import BacktestService
 from polara.broker.adapter import BrokerAdapter
 from polara.broker.client import IBClient
+from polara.dashboard.dashboard_service import DashboardService
+from polara.dashboard.trade_service import TradeService
 from polara.db.connection import DATABASE_URL, AsyncSessionLocal
 from polara.market_data.fetcher import IBFetcher
 from polara.market_data.service import MarketDataService
@@ -46,8 +50,18 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ib_client = IBClient(cp_gateway_url=CP_GATEWAY_URL)
         await ib_client.connect()
 
+        # Dashboard services
+        trade_svc = TradeService(db_session_factory=AsyncSessionLocal)
+        dashboard_svc = DashboardService(db_session_factory=AsyncSessionLocal)
+        app.state.trade_svc = trade_svc
+        app.state.dashboard_svc = dashboard_svc
+
         # Phase 2: Broker adapter
-        adapter = BrokerAdapter(ib_client=ib_client, db_session_factory=AsyncSessionLocal)
+        adapter = BrokerAdapter(
+            ib_client=ib_client,
+            db_session_factory=AsyncSessionLocal,
+            trade_service=trade_svc,
+        )
         adapter.start_polling()
         app.state.ib_client = ib_client
         app.state.broker_adapter = adapter
@@ -296,12 +310,18 @@ def _parse_symbols(env_var: str, default: str) -> list[str]:
 
 
 def create_app() -> FastAPI:
+    from pathlib import Path
+
     app = FastAPI(title="Polara Quant", version=_get_version(), lifespan=_lifespan)
 
     app.include_router(health_router)
     app.include_router(broker_router)
     app.include_router(market_data_router)
     app.include_router(strategy_router)
+    app.include_router(dashboard_router)
+
+    static_dir = Path(__file__).parent.parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     return app
 
