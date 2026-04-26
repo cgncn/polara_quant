@@ -6,146 +6,238 @@
   <title>Polara — Positions</title>
   <link rel="stylesheet" href="/static/dashboard/base.css">
   <style>
-    .refresh-note {
-      font-family: var(--mono);
-      font-size: 11px;
-      color: var(--text-dim);
-      margin-left: auto;
+    .kpi-strip-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      background: var(--surface-1);
+      border: 1px solid var(--line);
+      border-radius: var(--r6);
+      overflow: hidden;
+      margin-bottom: 14px;
     }
-    .upnl-col { font-weight: 700; }
-    .last-updated {
-      font-family: var(--mono);
-      font-size: 11px;
-      color: var(--text-muted);
-      text-align: right;
-      margin-top: 8px;
+    .kpi-strip-4 .kp {
+      padding: 16px 18px;
+      border-right: 1px solid var(--line);
     }
-    .open-orders-wrap { margin-top: 24px; }
+    .kpi-strip-4 .kp:last-child { border-right: none; }
+    .kpi-strip-4 .kp .lbl {
+      font-size: 10px;
+      color: var(--fg-3);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .kpi-strip-4 .kp .val {
+      font-family: var(--mono);
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .pulse-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--pos);
+      box-shadow: 0 0 6px var(--pos);
+      animation: pulse 2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .exposure-bar {
+      height: 3px;
+      background: var(--line);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .exposure-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s var(--ease);
+    }
+
+    @media (max-width: 700px) {
+      .kpi-strip-4 { grid-template-columns: repeat(2, 1fr); }
+    }
   </style>
 </head>
 <body>
-<div id="status-bar-mount"></div>
-<div id="nav-mount"></div>
+<div id="topbar-mount"></div>
 
 <div class="page">
-  <div class="page-header">
-    <h1>Positions</h1>
-    <div class="subtitle">Live open positions · refreshes every 10 seconds</div>
+
+  <!-- KPI strip -->
+  <div class="kpi-strip-4">
+    <div class="kp">
+      <div class="lbl">Open positions</div>
+      <div class="val" id="kpi-count">—</div>
+    </div>
+    <div class="kp">
+      <div class="lbl">Unrealised P&amp;L</div>
+      <div class="val" id="kpi-upnl">—</div>
+    </div>
+    <div class="kp">
+      <div class="lbl">Long exposure</div>
+      <div class="val" id="kpi-long">—</div>
+      <div class="exposure-bar"><div class="exposure-fill" id="long-bar" style="background:var(--pos);width:0%"></div></div>
+    </div>
+    <div class="kp">
+      <div class="lbl">Short exposure</div>
+      <div class="val" id="kpi-short">—</div>
+      <div class="exposure-bar"><div class="exposure-fill" id="short-bar" style="background:var(--neg);width:0%"></div></div>
+    </div>
   </div>
 
-  <div class="cards" id="pos-kpis">
-    <div class="card"><div class="label">Open Positions</div><div class="value neutral" id="kpi-count">—</div></div>
-    <div class="card"><div class="label">Unrealised P&L</div><div class="value" id="kpi-upnl">—</div></div>
-    <div class="card"><div class="label">Long Exposure</div><div class="value neutral" id="kpi-long">—</div></div>
-    <div class="card"><div class="label">Short Exposure</div><div class="value neutral" id="kpi-short">—</div></div>
-  </div>
-
-  <div class="table-wrap">
+  <!-- Open positions table -->
+  <div class="card" style="overflow:hidden;margin-bottom:14px">
     <div class="table-header">
-      <h2>Open Positions</h2>
-      <span class="refresh-note" id="refresh-note">—</span>
+      <span class="pulse-dot" id="live-dot" style="display:none"></span>
+      <h2>Open positions</h2>
+      <span style="font-size:11px;color:var(--fg-3)" id="pos-subtitle">Refreshes every 10 s</span>
+      <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--fg-4)" id="last-updated"></span>
     </div>
     <table>
       <thead>
         <tr>
-          <th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th>
-          <th>Entry</th><th>Last</th><th>Unreal P&L</th><th>Entry Time</th>
+          <th>Symbol</th>
+          <th>Strategy</th>
+          <th>Side</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Entry</th>
+          <th style="text-align:right">Last</th>
+          <th style="text-align:right">Unreal P&amp;L</th>
+          <th style="text-align:right">Entry time</th>
+          <th></th>
         </tr>
       </thead>
-      <tbody id="positions-body">
-        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      <tbody id="pos-body">
+        <tr><td colspan="9" class="empty">Loading…</td></tr>
       </tbody>
     </table>
   </div>
 
-  <div class="open-orders-wrap">
-    <div class="table-wrap">
-      <div class="table-header">
-        <h2>Open Trades (Pending Close)</h2>
-        <span class="dim" id="open-count"></span>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th>
-            <th>Entry Price</th><th>Entry Time</th><th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="open-trades-body">
-          <tr><td colspan="7" class="empty">Loading…</td></tr>
-        </tbody>
-      </table>
+  <!-- All open trades (entry pending exit) -->
+  <div class="card" style="overflow:hidden">
+    <div class="table-header">
+      <h2>Pending close</h2>
+      <span style="font-size:11px;color:var(--fg-3)" id="pending-count"></span>
     </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Strategy</th>
+          <th>Side</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Entry price</th>
+          <th style="text-align:right">Entry time</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="pending-body">
+        <tr><td colspan="7" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
   </div>
+
 </div>
+
+<div id="nav-mount"></div>
 
 <script src="/static/dashboard/base.js"></script>
 <script>
-document.getElementById('status-bar-mount').innerHTML = statusBar();
-document.getElementById('nav-mount').innerHTML = nav('Positions');
+document.getElementById('topbar-mount').innerHTML = topbar('Positions');
+document.getElementById('nav-mount').innerHTML = capsuleNav('Positions');
 init();
 
 async function loadPositions() {
   const trades = await (await fetch('/dashboard/api/trades?limit=500')).json();
-  const open = trades.filter(t => t.status === 'open');
+  const open   = trades.filter(t => t.status === 'open');
+
+  // Live pulse dot
+  const dot = document.getElementById('live-dot');
+  dot.style.display = open.length ? 'inline-block' : 'none';
+
+  // KPI values
+  let totalUpnl = 0, longExp = 0, shortExp = 0;
+  open.forEach(t => {
+    const upnl = t.unrealised_pnl != null ? parseFloat(t.unrealised_pnl) : 0;
+    totalUpnl += upnl;
+    const notional = parseFloat(t.quantity || 0) * parseFloat(t.entry_price || 0);
+    if (t.side === 'buy') longExp  += notional;
+    else                  shortExp += notional;
+  });
+  const totalExp = longExp + shortExp || 1;
 
   document.getElementById('kpi-count').textContent = open.length;
-  document.getElementById('open-count').textContent = `${open.length} open`;
 
-  let totalUpnl = 0;
-  let longExp = 0, shortExp = 0;
+  const upnlEl = document.getElementById('kpi-upnl');
+  upnlEl.textContent = open.length ? fmt.pnl(totalUpnl) : '—';
+  upnlEl.className   = 'val ' + (open.length ? pnlClass(totalUpnl) : '');
 
-  const tbody = document.getElementById('positions-body');
+  document.getElementById('kpi-long').textContent  = longExp  ? fmt.compact(longExp)  : '—';
+  document.getElementById('kpi-short').textContent = shortExp ? fmt.compact(shortExp) : '—';
+  document.getElementById('long-bar').style.width  = ((longExp  / totalExp) * 100).toFixed(1) + '%';
+  document.getElementById('short-bar').style.width = ((shortExp / totalExp) * 100).toFixed(1) + '%';
+
+  // Positions table
+  const posBody = document.getElementById('pos-body');
   if (!open.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">No open positions</td></tr>';
+    posBody.innerHTML = '<tr><td colspan="9" class="empty">No open positions</td></tr>';
   } else {
-    tbody.innerHTML = open.map(t => {
-      const upnl = t.unrealised_pnl !== null && t.unrealised_pnl !== undefined
-        ? parseFloat(t.unrealised_pnl) : null;
-      if (upnl !== null) totalUpnl += upnl;
-      const qty = parseFloat(t.quantity || 0);
-      const entry = parseFloat(t.entry_price || 0);
-      if (t.side === 'buy') longExp += qty * entry;
-      else shortExp += qty * entry;
-
+    posBody.innerHTML = open.map(t => {
+      const upnl    = t.unrealised_pnl != null ? parseFloat(t.unrealised_pnl) : null;
       return `<tr>
-        <td class="dim">${t.strategy_id}</td>
-        <td><strong>${t.symbol}</strong></td>
-        <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
-        <td>${fmt.price(t.quantity)}</td>
-        <td>${fmt.price(t.entry_price)}</td>
-        <td class="dim">—</td>
-        <td class="upnl-col ${upnl !== null ? pnlClass(upnl) : 'dim'}">
-          ${upnl !== null ? fmt.pnl(upnl) : '—'}
+        <td>
+          <span style="display:inline-flex;align-items:center;gap:8px">
+            ${tickerGlyph(t.symbol, 20)}
+            <strong style="font-family:var(--mono)">${t.symbol}</strong>
+          </span>
         </td>
-        <td class="dim">${fmt.time(t.entry_at)}</td>
+        <td style="color:var(--fg-3);font-size:11px">${t.strategy_id}</td>
+        <td><span class="pill ${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
+        <td style="text-align:right;font-family:var(--mono);color:var(--fg-2)">${fmt.price(t.quantity)}</td>
+        <td style="text-align:right;font-family:var(--mono)">${fmt.price(t.entry_price)}</td>
+        <td style="text-align:right;font-family:var(--mono);color:var(--fg-3)">—</td>
+        <td style="text-align:right">
+          ${upnl != null
+            ? `<span class="pill pill-${pnlClass(upnl)}">${fmt.pnl(upnl)}</span>`
+            : `<span style="color:var(--fg-4);font-size:11px">—</span>`}
+        </td>
+        <td style="text-align:right;font-family:var(--mono);color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
+        <td style="text-align:right;color:var(--fg-4)">${icon('arrowUR', 12)}</td>
       </tr>`;
     }).join('');
   }
 
-  const upnlEl = document.getElementById('kpi-upnl');
-  upnlEl.textContent = open.length ? fmt.pnl(totalUpnl) : '—';
-  upnlEl.className = 'value ' + (open.length ? pnlClass(totalUpnl) : 'neutral');
-
-  document.getElementById('kpi-long').textContent = longExp ? longExp.toFixed(0) : '—';
-  document.getElementById('kpi-short').textContent = shortExp ? shortExp.toFixed(0) : '—';
-
-  const openTbody = document.getElementById('open-trades-body');
+  // Pending close (same as open, cleaner view)
+  const pendBody = document.getElementById('pending-body');
+  document.getElementById('pending-count').textContent =
+    `${open.length} trade${open.length !== 1 ? 's' : ''} awaiting exit`;
   if (!open.length) {
-    openTbody.innerHTML = '<tr><td colspan="7" class="empty">No open trades</td></tr>';
+    pendBody.innerHTML = '<tr><td colspan="7" class="empty">No open trades</td></tr>';
   } else {
-    openTbody.innerHTML = open.map(t => `<tr>
-      <td class="dim">${t.strategy_id}</td>
-      <td><strong>${t.symbol}</strong></td>
-      <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
-      <td>${fmt.price(t.quantity)}</td>
-      <td>${fmt.price(t.entry_price)}</td>
-      <td class="dim">${fmt.time(t.entry_at)}</td>
-      <td><span class="badge open">OPEN</span></td>
+    pendBody.innerHTML = open.map(t => `<tr>
+      <td>
+        <span style="display:inline-flex;align-items:center;gap:8px">
+          ${tickerGlyph(t.symbol, 18)}
+          <strong style="font-family:var(--mono)">${t.symbol}</strong>
+        </span>
+      </td>
+      <td style="color:var(--fg-3);font-size:11px">${t.strategy_id}</td>
+      <td><span class="pill ${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
+      <td style="text-align:right;font-family:var(--mono);color:var(--fg-2)">${fmt.price(t.quantity)}</td>
+      <td style="text-align:right;font-family:var(--mono)">${fmt.price(t.entry_price)}</td>
+      <td style="text-align:right;font-family:var(--mono);color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
+      <td><span class="pill pill-neu">OPEN</span></td>
     </tr>`).join('');
   }
 
-  document.getElementById('refresh-note').textContent =
+  document.getElementById('last-updated').textContent =
     'Updated ' + new Date().toUTCString().slice(17, 25) + ' UTC';
 }
 
