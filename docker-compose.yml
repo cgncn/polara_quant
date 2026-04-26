@@ -1,41 +1,32 @@
 services:
-  ib-gateway:
-    image: ghcr.io/gnzsnz/ib-gateway:latest
-    restart: unless-stopped
-    environment:
-      - TWS_USERID=${IB_USERNAME}
-      - TWS_PASSWORD=${IB_PASSWORD}
-      - TRADING_MODE=paper
-      - TWS_SETTINGS_PATH=/home/ibgateway/Jts
-      - TWOFA_TIMEOUT_ACTION=restart
-      - TRUSTED_IPS=
-      - EXISTING_SESSION_DETECTED_ACTION=primary
-      # Graceful daily restart at 11:45 PM ET — before IBKR's 24h session timeout.
-      # IBC re-authenticates automatically using TWS_USERID/TWS_PASSWORD.
-      - AUTO_RESTART_TIME=23:45
+  cp-gateway:
+    build:
+      context: docker/cp-gateway
     ports:
-      - "4003:4003"
+      - "5050:5050"
     volumes:
-      - ib-jts:/home/ibgateway/Jts
+      - cp-jts:/root
+    environment:
+      - TZ=America/New_York
+    restart: unless-stopped
 
   polara-api:
     build:
       context: .
       dockerfile: docker/Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./data:/app/data
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/polara.db
-      - IB_HOST=ib-gateway
-      - IB_PORT=4004
-      - IB_CLIENT_ID=1
+      - CP_GATEWAY_URL=https://cp-gateway:5050/v1/api
       - MARKET_DATA_DB_PATH=data/market_data.duckdb
       - STRATEGY_INTERVAL_SECONDS=300
       - RISK_MAX_POSITION_PCT=10
       - RISK_MAX_DAILY_LOSS_PCT=5
       - MIN_ORDER_QUANTITY=1
+      - POSITION_SIZE_USD=120
 
       # ── MA Crossover ────────────────────────────────────────────────────────
       # Symbols: volatile mid/large-caps with meaningful hourly moves.
@@ -73,9 +64,8 @@ services:
       - MACD_STOP_LOSS_PCT=3
       - MACD_TAKE_PROFIT_PCT=8
 
-      # ── Bollinger Band Mean Reversion ───────────────────────────────────────
-      # PLTR only: BB has zero edge on COIN/SMCI/MSTR (trending/collapsing names).
-      # std=2.5 upgrades Sharpe from 1.14 → 1.90 and win rate from 72% → 87%.
+      # ── Bollinger Band Mean Reversion — hourly ──────────────────────────────
+      # PLTR: BB(20, 2.5σ) hourly. Sharpe 1.90, 87% WR. Best edge found.
       - BB_SYMBOLS=PLTR
       - BB_BAR_SIZE=1 hour
       - BB_PERIOD=20
@@ -83,6 +73,27 @@ services:
       - BB_QUANTITY=1
       - BB_STOP_LOSS_PCT=3
       - BB_TAKE_PROFIT_PCT=8
+
+      # ── Bollinger Band Mean Reversion — daily BB(30, 2.0σ) ─────────────────
+      # AM: Sharpe 1.42, 15 trades, 93% WR, PF 33. Best combo Sharpe+trades.
+      # RNR: Sharpe 1.05, 13 trades, 100% WR.
+      - BB_D30_SYMBOLS=AM,RNR
+      - BB_D30_BAR_SIZE=1 day
+      - BB_D30_PERIOD=30
+      - BB_D30_NUM_STD=2.0
+      - BB_D30_QUANTITY=1
+      - BB_D30_STOP_LOSS_PCT=3
+      - BB_D30_TAKE_PROFIT_PCT=8
+
+      # ── Bollinger Band Mean Reversion — daily BB(15, 2.0σ) ─────────────────
+      # CSL: Sharpe 0.96, 21 trades, 76% WR. Highest trade count of the group.
+      - BB_D15_SYMBOLS=CSL
+      - BB_D15_BAR_SIZE=1 day
+      - BB_D15_PERIOD=15
+      - BB_D15_NUM_STD=2.0
+      - BB_D15_QUANTITY=1
+      - BB_D15_STOP_LOSS_PCT=3
+      - BB_D15_TAKE_PROFIT_PCT=8
 
       # ── Rate-of-Change Momentum ─────────────────────────────────────────────
       # Buy/sell when 14-bar ROC breaks through ±2% threshold.
@@ -95,7 +106,7 @@ services:
       - MOM_TAKE_PROFIT_PCT=8
 
     depends_on:
-      - ib-gateway
+      - cp-gateway
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -105,4 +116,4 @@ services:
       start_period: 30s
 
 volumes:
-  ib-jts:
+  cp-jts:
