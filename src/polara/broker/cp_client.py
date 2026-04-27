@@ -77,9 +77,39 @@ class CPClient:
             await asyncio.sleep(55)
             try:
                 assert self._http is not None
-                await self._http.post(f"{self._base}/tickle")
+                r = await self._http.post(f"{self._base}/tickle")
+                r.raise_for_status()
+
+                auth = await self._get("/iserver/auth/status")
+                if not auth.get("authenticated"):
+                    log.warning("CP Gateway session unauthenticated — attempting reauthentication")
+                    await self._http.post(f"{self._base}/iserver/reauthenticate")
+                    await asyncio.sleep(3)
+                    await self._fetch_account_id()
+                    log.info("CP Gateway reauthenticated successfully")
+
             except Exception as exc:
-                log.warning("tickle failed: %s", exc)
+                log.warning("CP Gateway keepalive failed: %s — switching to reconnect mode", exc)
+                self._account_id = None
+                await self._reconnect_loop()
+
+    async def _reconnect_loop(self) -> None:
+        """Keep retrying until the CP Gateway session is restored."""
+        delay = 15
+        attempt = 0
+        while True:
+            attempt += 1
+            await asyncio.sleep(delay)
+            try:
+                assert self._http is not None
+                await self._http.post(f"{self._base}/iserver/reauthenticate")
+                await asyncio.sleep(3)
+                await self._fetch_account_id()
+                log.info("CP Gateway reconnected on attempt %d", attempt)
+                return
+            except Exception as exc:
+                log.warning("Reconnect attempt %d failed: %s", attempt, exc)
+                delay = min(delay * 2, 120)
 
     async def _fetch_account_id(self) -> None:
         accounts = await self._get("/portfolio/accounts")

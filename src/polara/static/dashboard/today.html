@@ -7,63 +7,128 @@
   <link rel="stylesheet" href="/static/dashboard/base.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
-    .dashboard-grid {
+    .main-grid {
       display: grid;
-      grid-template-columns: minmax(0,1fr) minmax(0,1.4fr);
-      gap: 14px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+      gap: 16px;
       align-items: start;
     }
-    .market-quote {
-      font-family: var(--serif);
-      font-size: 22px;
-      line-height: 1.35;
+
+    /* KPI strip */
+    .kpi-strip {
+      grid-template-columns: repeat(6, 1fr);
       margin-bottom: 14px;
     }
-    .market-quote em { font-style: italic; color: var(--fg-2); }
-    .sector-bar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
-    .sector-name { font-size: 12px; color: var(--fg-2); width: 160px; flex-shrink: 0; }
-    .sector-pct  { font-family: var(--mono); font-size: 11px; width: 50px; flex-shrink: 0; }
-    .sector-bars { flex: 1; display: flex; gap: 2px; align-items: flex-end; height: 14px; }
-    .sector-bar-seg { width: 2px; border-radius: 1px; }
-    .news-card { padding: 14px 16px; border-bottom: 1px solid var(--line-xs); }
-    .news-card:last-child { border-bottom: none; }
-    .news-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .news-body { font-size: 13px; color: var(--fg-2); line-height: 1.5; }
+
+    /* Left card internals */
+    .market-headline {
+      font-family: var(--font-serif);
+      font-size: 26px;
+      line-height: 1.3;
+      margin-bottom: 16px;
+    }
+    .market-headline em { font-style: italic; color: var(--fg-2); }
+
+    .chart-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+    .series-legend {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .series-swatch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--fg-2);
+    }
+    .series-swatch-bar {
+      width: 2px;
+      height: 10px;
+      border-radius: 1px;
+    }
+
+    /* Strategy bars (sector-bar style) */
+    .section-divider {
+      height: 1px;
+      background: var(--line);
+      margin: 14px 0;
+    }
+    .strategy-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 0;
+    }
+    .strategy-row-name {
+      font-size: var(--t-small);
+      color: var(--fg-2);
+      flex: 0 0 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .strategy-row-pct {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      flex: 0 0 56px;
+      text-align: right;
+    }
+    .strategy-bar-wrap {
+      flex: 1;
+      display: flex;
+      gap: 2px;
+      align-items: flex-end;
+      height: 14px;
+      justify-content: flex-end;
+      opacity: 0.8;
+    }
+    .strategy-bar-seg {
+      width: 2px;
+      border-radius: 1px;
+      min-height: 2px;
+    }
+
+    /* Right column */
+    .right-col { display: flex; flex-direction: column; gap: 14px; }
+
     .recap-card {
       background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
       border: 1px solid var(--line);
-      border-radius: var(--r6);
-      padding: 18px;
-      margin-bottom: 14px;
+      border-radius: var(--r-6);
+      padding: 18px 20px;
     }
-    .recap-label { font-size: 11px; color: var(--fg-3); margin-bottom: 8px; }
-    .recap-text  { font-size: 15px; line-height: 1.5; font-weight: 500; }
-    .right-col   { display: flex; flex-direction: column; gap: 14px; }
-    .pnl-chart-wrap { position: relative; }
-    .pnl-chart-wrap .timeframe-row {
-      display: flex; justify-content: flex-end; margin-bottom: 10px;
+    .recap-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
     }
-    .chart-date-label { font-family: var(--mono); font-size: 9px; color: var(--fg-3); position: absolute; right: 4px; top: 0; }
-    .kpi-strip {
-      display: grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap: 0;
-      background: var(--surface-1);
-      border: 1px solid var(--line);
-      border-radius: var(--r6);
-      overflow: hidden;
-      margin-bottom: 14px;
+    .recap-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: var(--t-small);
+      color: var(--fg-2);
     }
-    .kpi-item {
-      padding: 14px 16px;
-      border-right: 1px solid var(--line);
+    .recap-text {
+      font-size: var(--t-h3);
+      line-height: 1.45;
+      font-weight: 500;
     }
-    .kpi-item:last-child { border-right: none; }
-    .kpi-lbl { font-size: 10px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px; }
-    .kpi-num { font-family: var(--mono); font-size: 20px; letter-spacing: -0.02em; }
-    @media (max-width: 900px) {
-      .dashboard-grid { grid-template-columns: 1fr; }
-      .kpi-strip { grid-template-columns: repeat(3,1fr); }
+
+    /* Trade activity cards */
+    .trades-card { overflow: hidden; }
+
+    @media (max-width: 920px) {
+      .main-grid { grid-template-columns: 1fr; }
+      .kpi-strip { grid-template-columns: repeat(3, 1fr); }
     }
   </style>
 </head>
@@ -71,70 +136,82 @@
 <div id="topbar-mount"></div>
 
 <div class="page">
+
   <!-- KPI strip -->
-  <div class="kpi-strip" id="kpi-strip">
-    <div class="kpi-item"><div class="kpi-lbl">Net P&amp;L today</div><div class="kpi-num" id="kpi-pnl">—</div></div>
-    <div class="kpi-item"><div class="kpi-lbl">NAV</div><div class="kpi-num" id="kpi-nav">—</div></div>
-    <div class="kpi-item"><div class="kpi-lbl">Trades</div><div class="kpi-num" id="kpi-trades">—</div></div>
-    <div class="kpi-item"><div class="kpi-lbl">Win rate</div><div class="kpi-num" id="kpi-wr">—</div></div>
-    <div class="kpi-item"><div class="kpi-lbl">Winners</div><div class="kpi-num" id="kpi-wins" style="color:var(--pos)">—</div></div>
-    <div class="kpi-item"><div class="kpi-lbl">Losers</div><div class="kpi-num" id="kpi-losses">—</div></div>
+  <div class="stat-strip kpi-strip" id="kpi-strip">
+    <div class="stat-cell"><div class="stat-lbl">Net P&amp;L today</div><div class="stat-val" id="kpi-pnl">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">NAV</div><div class="stat-val" id="kpi-nav">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">Trades</div><div class="stat-val" id="kpi-trades">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">Win rate</div><div class="stat-val" id="kpi-wr">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">Winners</div><div class="stat-val pos" id="kpi-wins">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">Losers</div><div class="stat-val" id="kpi-losses">—</div></div>
   </div>
 
-  <div class="dashboard-grid">
-    <!-- Left column: market context + 30-day chart -->
-    <div>
-      <div class="card" style="padding:20px;margin-bottom:14px">
-        <div style="font-size:11px;color:var(--fg-3);font-family:var(--mono);margin-bottom:8px" id="date-label">—</div>
-        <div class="market-quote" id="market-quote">The markets are <em id="market-state">closed</em></div>
-        <div class="pnl-chart-wrap">
-          <canvas id="pnl-chart" style="max-height:120px"></canvas>
+  <div class="main-grid">
+
+    <!-- Left: market context + PnL chart + strategy bars -->
+    <div class="card" style="padding: 20px">
+
+      <div class="t-xs" style="color:var(--fg-3);margin-bottom:4px" id="date-label">—</div>
+
+      <div class="market-headline">
+        The markets are <em id="market-state">closed</em>
+      </div>
+
+      <!-- PnL chart -->
+      <div style="position:relative">
+        <div class="chart-dot-bg" style="height:100px">
+          <canvas id="pnl-chart" style="width:100%;height:100%"></canvas>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">30-day P&amp;L</span>
+        <div class="chart-label-row">
+          <div class="series-legend">
+            <span class="series-swatch">
+              <span class="series-swatch-bar" style="background:var(--fg)"></span>
+              P&amp;L
+            </span>
+          </div>
           <div class="segmented" id="chart-seg">
-            <button class="active">30D</button>
+            <button aria-selected="true">30D</button>
             <button>90D</button>
             <button>1Y</button>
           </div>
         </div>
-        <div style="height:1px;background:var(--line);margin:14px 0"></div>
-        <div style="font-size:11px;color:var(--fg-3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Strategy performance</div>
-        <div id="strategy-mini"></div>
       </div>
+
+      <div class="section-divider"></div>
+
+      <!-- Strategy bars (like sector bars in design) -->
+      <div class="t-micro" style="margin-bottom:10px">Strategy performance</div>
+      <div id="strategy-bars">
+        <div style="color:var(--fg-4);font-size:var(--t-xs);font-family:var(--font-mono);padding:4px 0">Loading…</div>
+      </div>
+
     </div>
 
-    <!-- Right column: recap + trades -->
+    <!-- Right: daily recap + trade activity -->
     <div class="right-col">
+
       <div class="recap-card">
-        <div class="recap-label">Daily recap · <span id="recap-date">—</span></div>
+        <div class="recap-header">
+          <div class="recap-label">
+            ${icon('back', 13)}
+            Daily recap · <span id="recap-date">—</span>
+          </div>
+          <span class="t-xs" style="color:var(--fg-3)" id="recap-time">Summarized today</span>
+        </div>
         <div class="recap-text" id="recap-text">Loading…</div>
       </div>
 
-      <div class="card" style="overflow:hidden">
+      <div class="card trades-card">
         <div class="table-header">
           <h2>Today's trades</h2>
-          <span style="font-size:11px;color:var(--fg-3)" id="trade-count-label"></span>
+          <span class="t-xs" id="trade-count-label"></span>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              <th>Symbol</th>
-              <th>Side</th>
-              <th style="text-align:right">Qty</th>
-              <th style="text-align:right">Entry</th>
-              <th style="text-align:right">Exit</th>
-              <th style="text-align:right">P&amp;L</th>
-              <th style="text-align:right">Time</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="trades-body">
-            <tr><td colspan="9" class="empty">Loading…</td></tr>
-          </tbody>
-        </table>
+        <div id="trades-feed">
+          <div class="empty">Loading…</div>
+        </div>
       </div>
+
     </div>
   </div>
 </div>
@@ -143,22 +220,28 @@
 
 <script src="/static/dashboard/base.js"></script>
 <script>
-document.getElementById('topbar-mount').innerHTML = topbar('Today');
+document.getElementById('topbar-mount').innerHTML = topbar('Hello, trader');
 document.getElementById('nav-mount').innerHTML = capsuleNav('Today');
 init();
 
-// Segmented chart control
 let chartDays = 30;
 let chartInstance = null;
+
+/* ── Segmented timeframe ─────────────────────────────────────────────────── */
 document.querySelectorAll('#chart-seg button').forEach((btn, i) => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('#chart-seg button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#chart-seg button').forEach(b => {
+      b.classList.remove('active');
+      b.removeAttribute('aria-selected');
+    });
     btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
     chartDays = [30, 90, 365][i];
     loadChart();
   });
 });
 
+/* ── Today summary ───────────────────────────────────────────────────────── */
 async function loadToday() {
   const d = await (await fetch('/dashboard/api/summary/today')).json();
 
@@ -168,110 +251,160 @@ async function loadToday() {
   document.getElementById('recap-date').textContent =
     new Date(d.date + 'T12:00:00Z').toLocaleDateString('en-US', { month:'long', day:'numeric' });
 
-  // KPIs
+  /* Market state from time of day */
+  const h = new Date().getUTCHours();
+  const state = (h >= 13 && h < 21) ? 'open' : h >= 21 ? 'closed' : 'pre-market';
+  const stateEl = document.getElementById('market-state');
+  stateEl.textContent = state;
+  stateEl.style.fontStyle = 'italic';
+
+  /* KPIs */
   const pnl = parseFloat(d.net_pnl);
   const pnlEl = document.getElementById('kpi-pnl');
   pnlEl.textContent = fmt.pnl(pnl);
-  pnlEl.className = 'kpi-num ' + pnlClass(pnl);
+  pnlEl.className = 'stat-val ' + pnlClass(pnl);
 
   document.getElementById('kpi-nav').textContent    = d.end_nav ? fmt.compact(d.end_nav) : '—';
   document.getElementById('kpi-trades').textContent = d.trade_count;
   document.getElementById('kpi-wr').textContent     = fmt.pct(d.win_rate);
   document.getElementById('kpi-wins').textContent   = d.win_count;
   const losses = d.trade_count - d.win_count;
-  const lEl = document.getElementById('kpi-losses');
-  lEl.textContent  = losses;
-  lEl.className    = 'kpi-num ' + (losses > 0 ? 'neg' : 'dim');
+  const lossEl = document.getElementById('kpi-losses');
+  lossEl.textContent = losses;
+  lossEl.className = 'stat-val ' + (losses > 0 ? 'neg' : 'dim');
 
   document.getElementById('trade-count-label').textContent =
-    `${d.trade_count} trade${d.trade_count !== 1 ? 's' : ''}`;
+    d.trade_count + ' trade' + (d.trade_count !== 1 ? 's' : '');
 
-  // Recap
-  document.getElementById('recap-text').textContent =
-    d.trade_count > 0
-      ? `${d.trade_count} trade${d.trade_count !== 1 ? 's' : ''} closed today · net ${fmt.pnl(d.net_pnl)} · ${fmt.pct(d.win_rate)} win rate. ${d.win_count} winner${d.win_count !== 1 ? 's' : ''}, ${losses} loser${losses !== 1 ? 's' : ''}.`
-      : 'No trades today. The system is running.';
+  /* Recap text */
+  const recapEl = document.getElementById('recap-text');
+  if (d.trade_count > 0) {
+    const losers = d.trade_count - d.win_count;
+    recapEl.textContent = `${d.trade_count} trade${d.trade_count !== 1 ? 's' : ''} closed today — net ${fmt.pnl(d.net_pnl)} — ${fmt.pct(d.win_rate)} win rate. ${d.win_count} winner${d.win_count !== 1 ? 's' : ''}, ${losers} loser${losers !== 1 ? 's' : ''}.`;
+  } else {
+    recapEl.textContent = 'No trades today. The system is running.';
+  }
 
-  // Trades table
-  const tbody = document.getElementById('trades-body');
+  /* Trade activity feed */
+  const feed = document.getElementById('trades-feed');
   if (!d.trades.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">No trades today</td></tr>';
+    feed.innerHTML = '<div class="empty">No trades today</div>';
     return;
   }
-  tbody.innerHTML = d.trades.map(t => {
+
+  feed.innerHTML = d.trades.map(t => {
     const hasPnl = t.realised_pnl != null;
+    const pnl = hasPnl ? parseFloat(t.realised_pnl) : 0;
     const side = t.side === 'buy' ? 'buy' : 'sell';
-    const sideColor = side === 'buy' ? 'var(--pos)' : 'var(--neg)';
-    return `<tr>
-      <td style="color:var(--fg-3);font-size:11px">${t.strategy_id}</td>
-      <td>
-        <span style="display:inline-flex;align-items:center;gap:6px">
-          ${tickerGlyph(t.symbol, 18)}
-          <strong style="font-family:var(--mono)">${t.symbol}</strong>
+    const pnlPill = hasPnl
+      ? `<span class="pill ${pnl >= 0 ? 'pill-pos' : 'pill-neg'}">${fmt.pnl(pnl)}</span>`
+      : `<span class="pill-neutral">open</span>`;
+    const sidePill = side === 'buy'
+      ? `<span class="pill-pos">${side.toUpperCase()}</span>`
+      : `<span class="pill-neg">${side.toUpperCase()}</span>`;
+
+    return `<div class="activity-card">
+      <div class="activity-meta">
+        ${tickerGlyph(t.symbol, 20)}
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:500">${t.symbol}</span>
+        ${sidePill}
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--fg-3)">×${fmt.price(t.quantity)}</span>
+        <span style="flex:1;min-width:8px"></span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--fg-3)">${fmt.time(t.entry_at)}</span>
+      </div>
+      <div class="activity-body" style="display:flex;align-items:center;gap:10px;justify-content:space-between">
+        <span>
+          <span style="color:var(--fg-3)">Entry</span>
+          <span style="font-family:var(--font-mono);margin-left:6px">${fmt.price(t.entry_price)}</span>
+          ${t.exit_price ? `<span style="color:var(--fg-3);margin-left:10px">Exit</span><span style="font-family:var(--font-mono);margin-left:6px">${fmt.price(t.exit_price)}</span>` : ''}
         </span>
-      </td>
-      <td><span class="pill ${side === 'buy' ? 'pill-pos' : 'pill-neg'}">${side.toUpperCase()}</span></td>
-      <td style="text-align:right;color:var(--fg-2)">${fmt.price(t.quantity)}</td>
-      <td style="text-align:right">${fmt.price(t.entry_price)}</td>
-      <td style="text-align:right">${fmt.price(t.exit_price)}</td>
-      <td style="text-align:right">
-        ${hasPnl ? `<span class="pill pill-${pnlClass(t.realised_pnl)}">${fmt.pnl(t.realised_pnl)}</span>` : '<span class="pill pill-neu">open</span>'}
-      </td>
-      <td style="text-align:right;color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
-      <td style="text-align:right;color:var(--fg-4)">${icon('arrowUR', 13)}</td>
-    </tr>`;
-  }).join('');
-}
-
-async function loadChart() {
-  const hist = await (await fetch(`/dashboard/api/pnl/history?days=${chartDays}`)).json();
-  if (!hist.length) return;
-  const sorted = [...hist].reverse();
-  const labels = sorted.map(d => d.date.slice(5));
-  const data   = sorted.map(d => parseFloat(d.net_pnl));
-  const colors = data.map(v => v >= 0 ? 'rgba(63,182,139,0.8)' : 'rgba(229,72,77,0.8)');
-
-  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-  chartInstance = new Chart(document.getElementById('pnl-chart'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{ data, backgroundColor: colors, borderRadius: 3, borderSkipped: false }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#6b7280', font: { family: 'Geist Mono', size: 9 }, maxTicksLimit: 8 } },
-        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#6b7280', font: { family: 'Geist Mono', size: 9 } } },
-      }
-    }
-  });
-}
-
-async function loadStrategyMini() {
-  const data = await (await fetch('/dashboard/api/strategy/performance')).json();
-  const el = document.getElementById('strategy-mini');
-  if (!data.length) {
-    el.innerHTML = '<div style="color:var(--fg-4);font-size:12px;padding:8px 0">No strategy data yet</div>';
-    return;
-  }
-  el.innerHTML = data.map(s => {
-    const pnl = parseFloat(s.net_pnl);
-    const pts = genCurve(Math.abs(s.strategy_id?.charCodeAt(0) || 7), 40, 100, 0.018, pnl > 0 ? 0.002 : -0.001);
-    const clr = pnl >= 0 ? 'var(--pos)' : 'var(--neg)';
-    return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line-xs)">
-      <span style="width:2px;height:12px;background:${clr};border-radius:1px;flex-shrink:0"></span>
-      <span style="font-family:var(--mono);font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.strategy_id}</span>
-      ${sparkline(pts, { color: clr, w: 60, h: 24, sw: 1.2 })}
-      <span class="pill pill-${pnlClass(pnl)}" style="flex-shrink:0">${fmt.pnl(pnl)}</span>
+        ${pnlPill}
+      </div>
     </div>`;
   }).join('');
 }
 
+/* ── PnL chart ───────────────────────────────────────────────────────────── */
+async function loadChart() {
+  const hist = await (await fetch(`/dashboard/api/pnl/history?days=${chartDays}`)).json();
+  if (!hist.length) return;
+
+  const sorted = [...hist].reverse();
+  const labels = sorted.map(d => d.date.slice(5));
+  const data   = sorted.map(d => parseFloat(d.net_pnl));
+  const colors = data.map(v => v >= 0 ? 'rgba(63,182,139,0.75)' : 'rgba(229,72,77,0.75)');
+
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+  chartInstance = new Chart(document.getElementById('pnl-chart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3, borderSkipped: false }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(12,12,14,0.96)',
+          titleColor: '#EDECE8',
+          bodyColor: 'rgba(237,236,232,0.55)',
+          borderColor: 'rgba(255,255,255,0.08)',
+          borderWidth: 1,
+          padding: 10,
+          cornerRadius: 6,
+          titleFont: { family: 'Geist Mono', size: 11 },
+          bodyFont:  { family: 'Geist Mono', size: 11 },
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(0,0,0,0)' },
+          ticks: { color: 'rgba(237,236,232,0.4)', font: { family: 'Geist Mono', size: 9 }, maxTicksLimit: 8 },
+        },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: 'rgba(237,236,232,0.4)', font: { family: 'Geist Mono', size: 9 } },
+        },
+      },
+    },
+  });
+}
+
+/* ── Strategy bars (sector-bar pattern) ─────────────────────────────────── */
+async function loadStrategyBars() {
+  const data = await (await fetch('/dashboard/api/strategy/performance')).json();
+  const el = document.getElementById('strategy-bars');
+  if (!data.length) {
+    el.innerHTML = '<div style="color:var(--fg-4);font-size:var(--t-xs);font-family:var(--font-mono);padding:4px 0">No strategy data yet</div>';
+    return;
+  }
+
+  const maxAbsPnl = Math.max(...data.map(s => Math.abs(parseFloat(s.net_pnl)))) || 1;
+
+  el.innerHTML = data.map(s => {
+    const pnl = parseFloat(s.net_pnl);
+    const color = pnl >= 0 ? 'var(--pos)' : 'var(--neg)';
+    const intensity = Math.abs(pnl) / maxAbsPnl;
+    const numBars = Math.max(2, Math.round(intensity * 24));
+
+    const bars = Array.from({ length: 28 }, (_, i) => {
+      const h = 4 + Math.abs(Math.sin(i * 1.1 + s.strategy_id.charCodeAt(0)) * 10) * intensity;
+      return `<span class="strategy-bar-seg" style="height:${h.toFixed(1)}px;background:${color}"></span>`;
+    }).join('');
+
+    const pts = genCurve(s.strategy_id.charCodeAt(0) || 7, 40, 100, 0.018, pnl > 0 ? 0.002 : -0.001);
+
+    return `<div class="strategy-row">
+      <span class="strategy-row-name t-small">${s.strategy_id}</span>
+      <span class="strategy-row-pct t-mono" style="color:${color}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</span>
+      <div class="strategy-bar-wrap">${bars}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Boot ────────────────────────────────────────────────────────────────── */
 loadToday();
 loadChart();
-loadStrategyMini();
+loadStrategyBars();
 setInterval(loadToday, 30_000);
 </script>
 </body>

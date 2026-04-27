@@ -11,7 +11,7 @@
       grid-template-columns: repeat(4, 1fr);
       background: var(--surface-1);
       border: 1px solid var(--line);
-      border-radius: var(--r6);
+      border-radius: var(--r-6);
       overflow: hidden;
       margin-bottom: 14px;
     }
@@ -21,18 +21,30 @@
     }
     .kpi-strip-4 .kp:last-child { border-right: none; }
     .kpi-strip-4 .kp .lbl {
-      font-size: 10px;
+      font-size: var(--t-micro);
+      font-weight: 500;
       color: var(--fg-3);
       text-transform: uppercase;
       letter-spacing: 0.06em;
       margin-bottom: 6px;
     }
     .kpi-strip-4 .kp .val {
-      font-family: var(--mono);
+      font-family: var(--font-mono);
       font-size: 22px;
       letter-spacing: -0.02em;
     }
-
+    .exposure-bar {
+      height: 2px;
+      background: var(--line);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 7px;
+    }
+    .exposure-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s var(--ease);
+    }
     .pulse-dot {
       display: inline-block;
       width: 6px; height: 6px;
@@ -42,24 +54,7 @@
       animation: pulse 2s ease-in-out infinite;
       flex-shrink: 0;
     }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.4; }
-    }
-
-    .exposure-bar {
-      height: 3px;
-      background: var(--line);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-top: 6px;
-    }
-    .exposure-fill {
-      height: 100%;
-      border-radius: 2px;
-      transition: width 0.4s var(--ease);
-    }
-
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     @media (max-width: 700px) {
       .kpi-strip-4 { grid-template-columns: repeat(2, 1fr); }
     }
@@ -70,7 +65,6 @@
 
 <div class="page">
 
-  <!-- KPI strip -->
   <div class="kpi-strip-4">
     <div class="kp">
       <div class="lbl">Open positions</div>
@@ -92,13 +86,12 @@
     </div>
   </div>
 
-  <!-- Open positions table -->
   <div class="card" style="overflow:hidden;margin-bottom:14px">
     <div class="table-header">
       <span class="pulse-dot" id="live-dot" style="display:none"></span>
       <h2>Open positions</h2>
-      <span style="font-size:11px;color:var(--fg-3)" id="pos-subtitle">Refreshes every 10 s</span>
-      <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--fg-4)" id="last-updated"></span>
+      <span class="t-xs" id="pos-subtitle">Refreshes every 10 s</span>
+      <span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--fg-4)" id="last-updated"></span>
     </div>
     <table>
       <thead>
@@ -108,23 +101,21 @@
           <th>Side</th>
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Entry</th>
-          <th style="text-align:right">Last</th>
           <th style="text-align:right">Unreal P&amp;L</th>
           <th style="text-align:right">Entry time</th>
           <th></th>
         </tr>
       </thead>
       <tbody id="pos-body">
-        <tr><td colspan="9" class="empty">Loading…</td></tr>
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
       </tbody>
     </table>
   </div>
 
-  <!-- All open trades (entry pending exit) -->
   <div class="card" style="overflow:hidden">
     <div class="table-header">
       <h2>Pending close</h2>
-      <span style="font-size:11px;color:var(--fg-3)" id="pending-count"></span>
+      <span class="t-xs" id="pending-count"></span>
     </div>
     <table>
       <thead>
@@ -158,11 +149,8 @@ async function loadPositions() {
   const trades = await (await fetch('/dashboard/api/trades?limit=500')).json();
   const open   = trades.filter(t => t.status === 'open');
 
-  // Live pulse dot
-  const dot = document.getElementById('live-dot');
-  dot.style.display = open.length ? 'inline-block' : 'none';
+  document.getElementById('live-dot').style.display = open.length ? 'inline-block' : 'none';
 
-  // KPI values
   let totalUpnl = 0, longExp = 0, shortExp = 0;
   open.forEach(t => {
     const upnl = t.unrealised_pnl != null ? parseFloat(t.unrealised_pnl) : 0;
@@ -184,37 +172,34 @@ async function loadPositions() {
   document.getElementById('long-bar').style.width  = ((longExp  / totalExp) * 100).toFixed(1) + '%';
   document.getElementById('short-bar').style.width = ((shortExp / totalExp) * 100).toFixed(1) + '%';
 
-  // Positions table
   const posBody = document.getElementById('pos-body');
   if (!open.length) {
-    posBody.innerHTML = '<tr><td colspan="9" class="empty">No open positions</td></tr>';
+    posBody.innerHTML = '<tr><td colspan="8" class="empty">No open positions</td></tr>';
   } else {
     posBody.innerHTML = open.map(t => {
-      const upnl    = t.unrealised_pnl != null ? parseFloat(t.unrealised_pnl) : null;
+      const upnl = t.unrealised_pnl != null ? parseFloat(t.unrealised_pnl) : null;
       return `<tr>
         <td>
           <span style="display:inline-flex;align-items:center;gap:8px">
             ${tickerGlyph(t.symbol, 20)}
-            <strong style="font-family:var(--mono)">${t.symbol}</strong>
+            <strong style="font-family:var(--font-mono)">${t.symbol}</strong>
           </span>
         </td>
-        <td style="color:var(--fg-3);font-size:11px">${t.strategy_id}</td>
-        <td><span class="pill ${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
-        <td style="text-align:right;font-family:var(--mono);color:var(--fg-2)">${fmt.price(t.quantity)}</td>
-        <td style="text-align:right;font-family:var(--mono)">${fmt.price(t.entry_price)}</td>
-        <td style="text-align:right;font-family:var(--mono);color:var(--fg-3)">—</td>
+        <td class="t-xs" style="color:var(--fg-3)">${t.strategy_id}</td>
+        <td><span class="${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
+        <td style="text-align:right;font-family:var(--font-mono);color:var(--fg-2)">${fmt.price(t.quantity)}</td>
+        <td style="text-align:right;font-family:var(--font-mono)">${fmt.price(t.entry_price)}</td>
         <td style="text-align:right">
           ${upnl != null
-            ? `<span class="pill pill-${pnlClass(upnl)}">${fmt.pnl(upnl)}</span>`
-            : `<span style="color:var(--fg-4);font-size:11px">—</span>`}
+            ? `<span class="${upnl >= 0 ? 'pill-pos' : 'pill-neg'}">${fmt.pnl(upnl)}</span>`
+            : `<span style="color:var(--fg-4)">—</span>`}
         </td>
-        <td style="text-align:right;font-family:var(--mono);color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
+        <td style="text-align:right;font-family:var(--font-mono);color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
         <td style="text-align:right;color:var(--fg-4)">${icon('arrowUR', 12)}</td>
       </tr>`;
     }).join('');
   }
 
-  // Pending close (same as open, cleaner view)
   const pendBody = document.getElementById('pending-body');
   document.getElementById('pending-count').textContent =
     `${open.length} trade${open.length !== 1 ? 's' : ''} awaiting exit`;
@@ -225,15 +210,15 @@ async function loadPositions() {
       <td>
         <span style="display:inline-flex;align-items:center;gap:8px">
           ${tickerGlyph(t.symbol, 18)}
-          <strong style="font-family:var(--mono)">${t.symbol}</strong>
+          <strong style="font-family:var(--font-mono)">${t.symbol}</strong>
         </span>
       </td>
-      <td style="color:var(--fg-3);font-size:11px">${t.strategy_id}</td>
-      <td><span class="pill ${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
-      <td style="text-align:right;font-family:var(--mono);color:var(--fg-2)">${fmt.price(t.quantity)}</td>
-      <td style="text-align:right;font-family:var(--mono)">${fmt.price(t.entry_price)}</td>
-      <td style="text-align:right;font-family:var(--mono);color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
-      <td><span class="pill pill-neu">OPEN</span></td>
+      <td class="t-xs" style="color:var(--fg-3)">${t.strategy_id}</td>
+      <td><span class="${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
+      <td style="text-align:right;font-family:var(--font-mono);color:var(--fg-2)">${fmt.price(t.quantity)}</td>
+      <td style="text-align:right;font-family:var(--font-mono)">${fmt.price(t.entry_price)}</td>
+      <td style="text-align:right;font-family:var(--font-mono);color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
+      <td><span class="pill-neutral">OPEN</span></td>
     </tr>`).join('');
   }
 

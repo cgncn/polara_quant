@@ -23,7 +23,7 @@
     .cal-grid-wrap {
       background: var(--surface-1);
       border: 1px solid var(--line);
-      border-radius: var(--r6);
+      border-radius: var(--r-6);
       overflow: hidden;
       margin-bottom: 16px;
     }
@@ -47,10 +47,10 @@
     .cal-cell {
       min-height: 80px;
       padding: 10px 12px;
-      border-right: 1px solid var(--line-xs);
-      border-bottom: 1px solid var(--line-xs);
+      border-right: 1px solid var(--line-soft);
+      border-bottom: 1px solid var(--line-soft);
       cursor: pointer;
-      transition: background var(--fast) var(--ease);
+      transition: background var(--dur-fast) var(--ease);
       position: relative;
     }
     .cal-cell:nth-child(7n) { border-right: none; }
@@ -64,7 +64,7 @@
     .cal-cell.loss:hover   { background: rgba(229,72,77,0.10); }
 
     .cal-day-num {
-      font-family: var(--mono);
+      font-family: var(--font-mono);
       font-size: 11px;
       color: var(--fg-3);
       margin-bottom: 6px;
@@ -75,13 +75,13 @@
     .cal-cell.today .cal-day-num { color: var(--accent); font-weight: 600; }
 
     .cal-pnl {
-      font-family: var(--mono);
+      font-family: var(--font-mono);
       font-size: 14px;
       font-weight: 500;
       letter-spacing: -0.01em;
     }
     .cal-meta {
-      font-family: var(--mono);
+      font-family: var(--font-mono);
       font-size: 10px;
       color: var(--fg-3);
       margin-top: 3px;
@@ -91,7 +91,7 @@
     .detail-panel {
       background: var(--surface-1);
       border: 1px solid var(--line);
-      border-radius: var(--r6);
+      border-radius: var(--r-6);
       overflow: hidden;
     }
   </style>
@@ -104,7 +104,7 @@
     <div id="cal-month-label" class="cal-month-title">—</div>
     <div class="cal-controls">
       <div class="segmented" id="view-seg">
-        <button class="active">Month</button>
+        <button aria-selected="true">Month</button>
         <button>Week</button>
       </div>
       <button class="btn" onclick="prevMonth()">← Prev</button>
@@ -227,16 +227,16 @@ async function selectDay(dateStr, cellEl) {
         <td>
           <span style="display:inline-flex;align-items:center;gap:6px">
             ${tickerGlyph(t.symbol, 18)}
-            <strong style="font-family:var(--mono)">${t.symbol}</strong>
+            <strong style="font-family:var(--font-mono)">${t.symbol}</strong>
           </span>
         </td>
-        <td><span class="pill ${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
+        <td><span class="${t.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${t.side.toUpperCase()}</span></td>
         <td style="text-align:right">${fmt.price(t.entry_price)}</td>
         <td style="text-align:right">${fmt.price(t.exit_price)}</td>
         <td style="text-align:right">
           ${hasPnl
-            ? `<span class="pill pill-${pnlClass(t.realised_pnl)}">${fmt.pnl(t.realised_pnl)}</span>`
-            : `<span class="pill pill-neu">open</span>`}
+            ? `<span class="${pnlClass(t.realised_pnl) === 'pos' ? 'pill-pos' : 'pill-neg'}">${fmt.pnl(t.realised_pnl)}</span>`
+            : `<span class="pill-neutral">open</span>`}
         </td>
         <td style="text-align:right;color:var(--fg-3)">${fmt.time(t.entry_at)}</td>
       </tr>`;

@@ -35,28 +35,33 @@ class OrderManager:
         db_session_factory,
         status_service: StrategyStatusService,
         min_order_quantity: Decimal = Decimal("1"),
+        position_size_usd: Decimal | None = None,
     ) -> None:
         self._adapter = broker_adapter
         self._risk_guard = risk_guard
         self._db = db_session_factory
         self._status_service = status_service
         self._min_order_quantity = min_order_quantity
+        self._position_size_usd = position_size_usd
         self._pending: dict[str, Decimal] = {}
 
     def _compute_quantity(self, signal: Signal, account) -> Decimal | None:
-        """Compute order quantity from signal strength and account NAV.
+        """Compute order quantity.
 
+        Uses fixed position_size_usd if set, otherwise falls back to NAV-based sizing.
         Returns None if computed quantity is below minimum (signal should be skipped).
-        Falls back to quantity=1 if signal has no reference_price.
         """
         if signal.reference_price and signal.reference_price > Decimal(0):
-            target_notional = (
-                account.net_liquidation
-                * (self._risk_guard.max_position_pct / Decimal("100"))
-                * abs(signal.strength)
-            )
-            quantity = (target_notional / signal.reference_price).to_integral_value(
-                rounding=ROUND_DOWN
+            if self._position_size_usd:
+                target_notional = self._position_size_usd
+            else:
+                target_notional = (
+                    account.net_liquidation
+                    * (self._risk_guard.max_position_pct / Decimal("100"))
+                    * abs(signal.strength)
+                )
+            quantity = (target_notional / signal.reference_price).quantize(
+                Decimal("0.01"), rounding=ROUND_DOWN
             )
         else:
             logger.warning(

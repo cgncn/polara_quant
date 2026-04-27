@@ -65,11 +65,42 @@ async def broker_status(request: Request):
     }
 
 
+# ── Performance analytics endpoints ───────────────────────────────────────────
+
+@router.get("/api/performance/metrics")
+async def performance_metrics(request: Request):
+    return await _svc(request).performance_metrics()
+
+
+@router.get("/api/performance/equity_curve")
+async def equity_curve(request: Request, days: int = Query(90, ge=7, le=365)):
+    return await _svc(request).equity_curve(days=days)
+
+
+@router.get("/api/performance/distribution")
+async def pnl_distribution(request: Request):
+    return await _svc(request).pnl_distribution()
+
+
+@router.get("/api/performance/rolling_sharpe")
+async def rolling_sharpe(
+    request: Request,
+    days: int = Query(120, ge=30, le=365),
+    window: int = Query(30, ge=5, le=90),
+):
+    return await _svc(request).rolling_sharpe(days=days, window=window)
+
+
+@router.get("/api/performance/positions")
+async def active_positions(request: Request):
+    return await _svc(request).active_positions()
+
+
 # ── HTML page routes ───────────────────────────────────────────────────────────
 
 def _html(path: str) -> HTMLResponse:
     from pathlib import Path
-    static_dir = Path(__file__).parent.parent / "static" / "dashboard"
+    static_dir = Path(__file__).parent.parent.parent / "static" / "dashboard"
     content = (static_dir / path).read_text()
     return HTMLResponse(content)
 
@@ -92,3 +123,8 @@ async def page_strategies():
 @router.get("/positions", response_class=HTMLResponse)
 async def page_positions():
     return _html("positions.html")
+
+
+@router.get("/performance", response_class=HTMLResponse)
+async def page_performance():
+    return _html("performance.html")

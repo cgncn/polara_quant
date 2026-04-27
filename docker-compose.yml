@@ -25,7 +25,7 @@ services:
       - STRATEGY_INTERVAL_SECONDS=300
       - RISK_MAX_POSITION_PCT=10
       - RISK_MAX_DAILY_LOSS_PCT=5
-      - MIN_ORDER_QUANTITY=1
+      - MIN_ORDER_QUANTITY=0.01
       - POSITION_SIZE_USD=120
 
       # ── MA Crossover ────────────────────────────────────────────────────────

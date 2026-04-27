@@ -99,6 +99,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             db_session_factory=AsyncSessionLocal,
             status_service=status_service,
             min_order_quantity=Decimal(os.environ.get("MIN_ORDER_QUANTITY", "1")),
+            position_size_usd=Decimal(pos_size_raw) if pos_size_raw else None,
         )
         app.state.order_manager = order_manager
 

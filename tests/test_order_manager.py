@@ -385,7 +385,7 @@ async def test_dynamic_sizing_quantity_is_decimal():
 
 @pytest.mark.asyncio
 async def test_dynamic_sizing_uses_floor_not_round():
-    """NAV=100000, pct=10, price=49, strength=1.0 → floor(10000/49)=204 not 205"""
+    """NAV=100000, pct=10, price=49, strength=1.0 → floor(10000/49, 2dp)=204.08"""
     adapter = make_mock_adapter(account=make_account_with_nav(Decimal("100000")))
     guard = RiskGuard(max_position_pct=Decimal("10"), max_daily_loss_pct=Decimal("5"))
     db_factory, _ = make_mock_db_session()
@@ -401,7 +401,7 @@ async def test_dynamic_sizing_uses_floor_not_round():
     await manager.process_signal(signal)
 
     req = adapter.place_order.call_args[0][0]
-    assert req.quantity == Decimal("204")
+    assert req.quantity == Decimal("204.08")
 
 
 def make_position(symbol: str, quantity: Decimal) -> Position:

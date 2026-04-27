@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polara — Performance</title>
+  <link rel="stylesheet" href="/static/dashboard/base.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Snapshot strip ───────────────────────────────────────────────────── */
+    .snap-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      background: var(--surface-1);
+      border: 1px solid var(--line);
+      border-radius: var(--r-6);
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .snap-item {
+      padding: 18px 20px 16px;
+      border-right: 1px solid var(--line);
+    }
+    .snap-item:last-child { border-right: none; }
+    .snap-lbl {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--fg-3);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+    .snap-val {
+      font-family: var(--font-mono);
+      font-size: 26px;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .snap-sub {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--fg-4);
+      margin-top: 5px;
+    }
+    .dd-track {
+      width: 100%;
+      height: 2px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 99px;
+      margin-top: 9px;
+      overflow: hidden;
+    }
+    .dd-fill {
+      height: 100%;
+      background: var(--neg);
+      border-radius: 99px;
+      transition: width 1.2s cubic-bezier(0.2,0.8,0.2,1);
+      box-shadow: 0 0 4px var(--neg);
+    }
+    .exposure-segs {
+      display: flex;
+      gap: 2px;
+      margin-top: 8px;
+      height: 3px;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .exposure-market { background: #6FA8FF; transition: width 1s var(--ease); }
+    .exposure-cash   { background: rgba(255,255,255,0.12); flex: 1; }
+
+    /* ── Main layout ──────────────────────────────────────────────────────── */
+    .perf-grid {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 14px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+    .perf-left { display: flex; flex-direction: column; gap: 12px; }
+
+    /* ── Chart panels ─────────────────────────────────────────────────────── */
+    .chart-panel {
+      background: var(--surface-1);
+      border: 1px solid var(--line);
+      border-radius: var(--r-6);
+      overflow: hidden;
+    }
+    .panel-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 18px 10px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .panel-title {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--fg-3);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .panel-body { padding: 14px 18px; }
+    .chart-h { position: relative; }
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* ── Institutional metrics panel ──────────────────────────────────────── */
+    .metrics-panel {
+      background: var(--surface-1);
+      border: 1px solid var(--line);
+      border-radius: var(--r-6);
+      overflow: hidden;
+      position: sticky;
+      top: calc(var(--topbar-h) + 8px);
+    }
+    .metrics-hdr {
+      padding: 16px 20px 13px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(160deg, rgba(240,198,107,0.07) 0%, transparent 60%);
+      position: relative;
+    }
+    .metrics-hdr::after {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #F0C66B 0%, rgba(240,198,107,0) 100%);
+    }
+    .metrics-title {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 15px;
+      color: var(--fg);
+      margin-bottom: 1px;
+    }
+    .metrics-sub {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--fg-4);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .metric-row {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--line-soft);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: start;
+      gap: 10px;
+      transition: background 120ms var(--ease);
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-row:hover { background: rgba(255,255,255,0.02); }
+    .metric-name {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--fg-2);
+    }
+    .metric-why {
+      font-size: 9px;
+      color: var(--fg-4);
+      line-height: 1.5;
+      margin-top: 2px;
+      font-family: var(--font-mono);
+    }
+    .metric-val {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      text-align: right;
+      line-height: 1;
+    }
+    .metric-val.gold { color: #F0C66B; }
+    .metric-val.good { color: var(--pos); }
+    .metric-val.warn { color: var(--accent); }
+    .metric-val.bad  { color: var(--neg); }
+    .metric-badge {
+      font-family: var(--font-mono);
+      font-size: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 5px;
+      border-radius: 3px;
+      margin-top: 4px;
+      display: inline-block;
+    }
+    .badge-good { background: var(--pos-soft);    color: var(--pos); }
+    .badge-warn { background: var(--accent-soft); color: var(--accent); }
+    .badge-bad  { background: var(--neg-soft);    color: var(--neg); }
+
+    /* ── Bottom grid ──────────────────────────────────────────────────────── */
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 260px;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    /* ── Heatmap ──────────────────────────────────────────────────────────── */
+    .heatmap-wrap {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+      gap: 4px;
+      padding: 14px 16px;
+    }
+    .hm-cell {
+      aspect-ratio: 1;
+      border-radius: 7px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      cursor: default;
+      transition: transform 100ms var(--ease), filter 100ms var(--ease);
+    }
+    .hm-cell:hover { transform: scale(1.1); filter: brightness(1.2); z-index: 2; }
+    .hm-sym {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.92);
+      letter-spacing: 0.02em;
+    }
+    .hm-pnl {
+      font-family: var(--font-mono);
+      font-size: 8px;
+      color: rgba(255,255,255,0.6);
+      margin-top: 2px;
+    }
+
+    /* ── System health ────────────────────────────────────────────────────── */
+    .health-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 18px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .health-row:last-child { border-bottom: none; }
+    .health-lbl {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--fg-4);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .health-val {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--fg-2);
+    }
+    .lat-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      flex-shrink: 0;
+    }
+    .lat-good { background: var(--pos); box-shadow: 0 0 6px var(--pos); animation: pulse-dot 2s infinite; }
+    .lat-warn { background: var(--accent); }
+    .lat-bad  { background: var(--neg); }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ── Active positions table ───────────────────────────────────────────── */
+    .positions-panel {
+      background: var(--surface-1);
+      border: 1px solid var(--line);
+      border-radius: var(--r-6);
+      overflow: hidden;
+    }
+
+    /* ── Drawdown divider ─────────────────────────────────────────────────── */
+    .dd-separator {
+      padding: 6px 18px 12px;
+      border-top: 1px solid var(--line-soft);
+    }
+    .dd-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--fg-4);
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      margin-bottom: 4px;
+    }
+
+    /* ── Responsive ───────────────────────────────────────────────────────── */
+    @media (max-width: 1150px) {
+      .perf-grid    { grid-template-columns: 1fr; }
+      .metrics-panel { position: static; }
+      .bottom-grid  { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 720px) {
+      .snap-strip   { grid-template-columns: repeat(2, 1fr); }
+      .charts-row   { grid-template-columns: 1fr; }
+      .bottom-grid  { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div id="topbar-mount"></div>
+
+<div class="page">
+
+  <!-- ── 1. Snapshot strip ─────────────────────────────────────────────────── -->
+  <div class="snap-strip">
+    <div class="snap-item">
+      <div class="snap-lbl">Total Equity</div>
+      <div class="snap-val" id="snap-equity">—</div>
+      <div class="snap-sub" id="snap-equity-sub">Portfolio value</div>
+    </div>
+    <div class="snap-item">
+      <div class="snap-lbl">Daily P&amp;L</div>
+      <div class="snap-val" id="snap-dpnl">—</div>
+      <div class="snap-sub" id="snap-dpnl-sub">—</div>
+    </div>
+    <div class="snap-item">
+      <div class="snap-lbl">Current Drawdown</div>
+      <div class="snap-val" id="snap-dd" style="color:var(--neg)">—</div>
+      <div class="dd-track"><div class="dd-fill" id="dd-fill" style="width:0%"></div></div>
+    </div>
+    <div class="snap-item">
+      <div class="snap-lbl">Market Exposure</div>
+      <div class="snap-val" id="snap-exp">—</div>
+      <div class="exposure-segs">
+        <div class="exposure-market" id="exp-market-bar" style="width:0%"></div>
+        <div class="exposure-cash"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 2+3. Main grid: charts left · metrics right ───────────────────────── -->
+  <div class="perf-grid">
+
+    <!-- Left: all charts -->
+    <div class="perf-left">
+
+      <!-- Equity curve + drawdown underwater -->
+      <div class="chart-panel">
+        <div class="panel-hdr">
+          <span class="panel-title">Equity Curve</span>
+          <div class="segmented" id="eq-seg">
+            <button aria-selected="true">30D</button>
+            <button>90D</button>
+            <button>1Y</button>
+          </div>
+        </div>
+        <div class="panel-body" style="padding-bottom: 6px">
+          <div class="chart-h chart-dot-bg" style="height:130px">
+            <canvas id="equity-chart"></canvas>
+          </div>
+        </div>
+        <div class="dd-separator">
+          <div class="dd-label">Drawdown from peak</div>
+          <div class="chart-h chart-dot-bg" style="height:44px">
+            <canvas id="drawdown-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rolling Sharpe + PnL Histogram -->
+      <div class="charts-row">
+        <div class="chart-panel">
+          <div class="panel-hdr">
+            <span class="panel-title">Rolling Sharpe</span>
+            <span style="font-family:var(--font-mono);font-size:9px;color:var(--fg-4)">30-DAY WINDOW · ANN.</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-h chart-dot-bg" style="height:110px">
+              <canvas id="sharpe-chart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="chart-panel">
+          <div class="panel-hdr">
+            <span class="panel-title">P&amp;L Distribution</span>
+            <span style="font-family:var(--font-mono);font-size:9px;color:var(--fg-4)" id="dist-stats">—</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-h chart-dot-bg" style="height:110px">
+              <canvas id="histogram-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /perf-left -->
+
+    <!-- Right: institutional metrics -->
+    <div class="metrics-panel">
+      <div class="metrics-hdr">
+        <div class="metrics-title">Performance Metrics</div>
+        <div class="metrics-sub">Institutional grade · All closed trades</div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Profit Factor</div>
+          <div class="metric-why">Gross profit ÷ gross loss.<br>Below 1.0 = system is losing money.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val gold" id="m-pf">—</div>
+          <div id="m-pf-badge"></div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Recovery Factor</div>
+          <div class="metric-why">Total profit ÷ max drawdown.<br>Speed of wound-healing.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val" id="m-rf">—</div>
+          <div id="m-rf-badge"></div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Win / Loss Ratio</div>
+          <div class="metric-why">Avg win ÷ avg loss.<br>System's R:R balance.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val" id="m-wl">—</div>
+          <div id="m-wl-badge"></div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Expectancy</div>
+          <div class="metric-why">Expected return per trade.<br>Must be positive for edge.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val" id="m-exp">—</div>
+          <div id="m-exp-badge"></div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Win Rate</div>
+          <div class="metric-why">% of trades closed in profit.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val" id="m-wr">—</div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Max Drawdown</div>
+          <div class="metric-why">Peak-to-trough decline.<br>Hard risk boundary.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val" style="color:var(--neg)" id="m-mdd">—</div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Total Trades</div>
+          <div class="metric-why">Closed positions in sample.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric-val" style="color:var(--fg-2)" id="m-tc">—</div>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div>
+          <div class="metric-name">Avg Win · Avg Loss</div>
+          <div class="metric-why">Mean P&L per winning and losing trade.</div>
+        </div>
+        <div style="text-align:right; line-height:1.6">
+          <span class="up" style="font-family:var(--font-mono);font-size:13px" id="m-aw">—</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--fg-4)"> / </span>
+          <span class="down" style="font-family:var(--font-mono);font-size:13px" id="m-al">—</span>
+        </div>
+      </div>
+
+    </div><!-- /metrics-panel -->
+
+  </div><!-- /perf-grid -->
+
+  <!-- ── 4. Bottom: strategy bars · symbol heatmap · system health ────────── -->
+  <div class="bottom-grid">
+
+    <!-- Strategy performance bar chart -->
+    <div class="chart-panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Strategy Performance</span>
+        <span style="font-family:var(--font-mono);font-size:9px;color:var(--fg-4)">NET P&amp;L ALL TIME</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-h" style="height:180px">
+          <canvas id="strategy-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Symbol heatmap -->
+    <div class="chart-panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Symbol Heatmap</span>
+        <span style="font-family:var(--font-mono);font-size:9px;color:var(--fg-4)">P&amp;L INTENSITY</span>
+      </div>
+      <div class="heatmap-wrap" id="heatmap-wrap">
+        <div style="color:var(--fg-4);font-size:11px;font-family:var(--font-mono);padding:8px 0">No data</div>
+      </div>
+    </div>
+
+    <!-- System health -->
+    <div class="chart-panel">
+      <div class="panel-hdr">
+        <span class="panel-title">System Health</span>
+        <span style="font-family:var(--font-mono);font-size:9px;color:var(--fg-4)" id="health-ts">—</span>
+      </div>
+      <div style="padding: 4px 0">
+        <div class="health-row">
+          <span class="health-lbl">IB Gateway</span>
+          <span class="health-val">
+            <span class="lat-dot" id="dot-ib"></span><span id="val-ib">—</span>
+          </span>
+        </div>
+        <div class="health-row">
+          <span class="health-lbl">API Latency</span>
+          <span class="health-val">
+            <span class="lat-dot lat-good"></span><span id="val-api">—</span>
+          </span>
+        </div>
+        <div class="health-row">
+          <span class="health-lbl">DB Latency</span>
+          <span class="health-val">
+            <span class="lat-dot lat-good"></span><span id="val-db">—</span>
+          </span>
+        </div>
+        <div class="health-row">
+          <span class="health-lbl">Account</span>
+          <span class="health-val" id="val-acct" style="color:var(--fg-3)">—</span>
+        </div>
+        <div class="health-row">
+          <span class="health-lbl">NAV</span>
+          <span class="health-val" id="val-nav">—</span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /bottom-grid -->
+
+  <!-- ── Active positions table ─────────────────────────────────────────────── -->
+  <div class="positions-panel">
+    <div class="table-header">
+      <h2>Active Positions</h2>
+      <span style="font-size:11px;color:var(--fg-3)" id="pos-count">—</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy</th>
+          <th>Symbol</th>
+          <th>Side</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Entry</th>
+          <th style="text-align:right">Opened</th>
+          <th style="text-align:right">Commission</th>
+          <th style="text-align:right">Cost Basis</th>
+        </tr>
+      </thead>
+      <tbody id="positions-body">
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /page -->
+
+<div id="nav-mount"></div>
+
+<script src="/static/dashboard/base.js"></script>
+<script>
+document.getElementById('topbar-mount').innerHTML = topbar('Performance');
+document.getElementById('nav-mount').innerHTML = capsuleNav('Performance');
+init();
+
+/* ── Shared chart config ─────────────────────────────────────────────────── */
+const TOOLTIP = {
+  backgroundColor: 'rgba(12,12,14,0.96)',
+  titleColor: '#EDECE8',
+  bodyColor: 'rgba(237,236,232,0.55)',
+  borderColor: 'rgba(255,255,255,0.08)',
+  borderWidth: 1,
+  padding: 10,
+  cornerRadius: 6,
+  titleFont: { family: 'Geist Mono', size: 11 },
+  bodyFont:  { family: 'Geist Mono', size: 11 },
+};
+const TICK = { color: '#555', font: { family: 'Geist Mono', size: 9 } };
+const GRID = { color: 'rgba(255,255,255,0.04)' };
+const BASE_OPTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false }, tooltip: TOOLTIP },
+  scales: {
+    x: { grid: GRID, ticks: { ...TICK, maxTicksLimit: 6 } },
+    y: { grid: GRID, ticks: TICK },
+  },
+};
+
+/* ── Chart instances ─────────────────────────────────────────────────────── */
+let charts = {};
+function destroyChart(key) {
+  if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+}
+
+/* ── Equity curve + drawdown ─────────────────────────────────────────────── */
+let eqDays = 30;
+document.querySelectorAll('#eq-seg button').forEach((btn, i) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#eq-seg button').forEach(b => b.removeAttribute('aria-selected'));
+    btn.setAttribute('aria-selected', 'true');
+    eqDays = [30, 90, 365][i];
+    loadEquity();
+  });
+});
+
+async function loadEquity() {
+  const data = await apiFetch(`/dashboard/api/performance/equity_curve?days=${eqDays}`);
+  if (!data || !data.length) return;
+
+  const labels = data.map(d => d.date.slice(5));
+  const navs   = data.map(d => d.nav);
+  const dds    = data.map(d => -d.drawdown_pct);
+
+  /* Equity */
+  destroyChart('eq');
+  const eqCtx = document.getElementById('equity-chart').getContext('2d');
+  const gradEq = eqCtx.createLinearGradient(0, 0, 0, 130);
+  gradEq.addColorStop(0, 'rgba(111,168,255,0.28)');
+  gradEq.addColorStop(1, 'rgba(111,168,255,0)');
+  charts.eq = new Chart(eqCtx, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: navs,
+      borderColor: '#6FA8FF',
+      borderWidth: 1.5,
+      fill: true,
+      backgroundColor: gradEq,
+      pointRadius: 0,
+      tension: 0.25,
+    }]},
+    options: { ...BASE_OPTS, scales: {
+      x: { ...BASE_OPTS.scales.x },
+      y: { ...BASE_OPTS.scales.y, ticks: { ...TICK, callback: v => fmt.compact(v) } },
+    }},
+  });
+
+  /* Drawdown underwater */
+  destroyChart('dd');
+  const ddCtx = document.getElementById('drawdown-chart').getContext('2d');
+  const gradDd = ddCtx.createLinearGradient(0, 0, 0, 44);
+  gradDd.addColorStop(0, 'rgba(229,72,77,0.05)');
+  gradDd.addColorStop(1, 'rgba(229,72,77,0.35)');
+  charts.dd = new Chart(ddCtx, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: dds,
+      borderColor: '#E5484D',
+      borderWidth: 1,
+      fill: true,
+      backgroundColor: gradDd,
+      pointRadius: 0,
+      tension: 0.25,
+    }]},
+    options: {
+      ...BASE_OPTS,
+      scales: {
+        x: { display: false },
+        y: {
+          grid: { display: false },
+          ticks: { ...TICK, callback: v => v.toFixed(1) + '%' },
+          max: 0,
+        },
+      },
+    },
+  });
+
+  /* Snapshot: equity & drawdown */
+  const last = data[data.length - 1];
+  if (last) {
+    document.getElementById('snap-equity').textContent = fmt.compact(last.nav);
+    const dd = last.drawdown_pct;
+    document.getElementById('snap-dd').textContent = dd === 0 ? '0.00%' : '-' + dd.toFixed(2) + '%';
+    document.getElementById('dd-fill').style.width = Math.min(dd * 2, 100) + '%';
+  }
+}
+
+/* ── Rolling Sharpe ─────────────────────────────────────────────────────── */
+async function loadSharpe() {
+  const data = await apiFetch('/dashboard/api/performance/rolling_sharpe?days=120&window=30');
+  if (!data || !data.length) return;
+  const labels  = data.map(d => d.date.slice(5));
+  const sharpes = data.map(d => d.sharpe);
+  const minS    = Math.min(...sharpes);
+
+  destroyChart('sharpe');
+  const ctx = document.getElementById('sharpe-chart').getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 110);
+  grad.addColorStop(0, 'rgba(181,156,255,0.25)');
+  grad.addColorStop(1, 'rgba(181,156,255,0)');
+  charts.sharpe = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: sharpes,
+      borderColor: '#B59CFF',
+      borderWidth: 1.5,
+      fill: true,
+      backgroundColor: grad,
+      pointRadius: 0,
+      tension: 0.3,
+    }]},
+    options: {
+      ...BASE_OPTS,
+      scales: {
+        x: BASE_OPTS.scales.x,
+        y: {
+          grid: GRID,
+          ticks: { ...TICK, callback: v => v.toFixed(1) },
+          suggestedMin: Math.min(minS - 0.2, 0),
+        },
+      },
+    },
+  });
+}
+
+/* ── PnL distribution histogram ─────────────────────────────────────────── */
+async function loadHistogram() {
+  const d = await apiFetch('/dashboard/api/performance/distribution');
+  if (!d || !d.bins || !d.bins.length) return;
+  document.getElementById('dist-stats').textContent =
+    'μ ' + fmt.pnl(d.mean) + '  σ ' + Math.abs(d.std).toFixed(2);
+  const colors = d.bins.map(b => b >= 0 ? 'rgba(63,182,139,0.75)' : 'rgba(229,72,77,0.75)');
+  destroyChart('hist');
+  charts.hist = new Chart(document.getElementById('histogram-chart'), {
+    type: 'bar',
+    data: { labels: d.bins.map(b => b.toFixed(0)), datasets: [{
+      data: d.counts,
+      backgroundColor: colors,
+      borderRadius: 2,
+      borderSkipped: false,
+    }]},
+    options: { ...BASE_OPTS, scales: {
+      x: { ...BASE_OPTS.scales.x, ticks: { ...TICK, maxTicksLimit: 5 } },
+      y: BASE_OPTS.scales.y,
+    }},
+  });
+}
+
+/* ── Institutional metrics ──────────────────────────────────────────────── */
+function badge(cls, text) {
+  return `<span class="metric-badge badge-${cls}">${text}</span>`;
+}
+function metricVal(el, value, thresholds) {
+  const n = parseFloat(value);
+  let cls = 'dim';
+  if (thresholds) {
+    if (n >= thresholds[0])      cls = 'good';
+    else if (n >= thresholds[1]) cls = 'warn';
+    else                          cls = 'bad';
+  }
+  return { n, cls };
+}
+
+async function loadMetrics() {
+  const m = await apiFetch('/dashboard/api/performance/metrics');
+  if (!m) return;
+
+  /* Profit Factor */
+  if (m.profit_factor != null) {
+    const pf = parseFloat(m.profit_factor);
+    const pfEl = document.getElementById('m-pf');
+    pfEl.textContent = pf.toFixed(2);
+    pfEl.className = 'metric-val ' + (pf >= 1.5 ? 'gold' : pf >= 1 ? 'warn' : 'bad');
+    document.getElementById('m-pf-badge').innerHTML =
+      pf >= 1.5 ? badge('good', 'Healthy') : pf >= 1 ? badge('warn', 'Marginal') : badge('bad', 'Losing');
+  }
+
+  /* Recovery Factor */
+  if (m.recovery_factor != null) {
+    const rf = parseFloat(m.recovery_factor);
+    const rfEl = document.getElementById('m-rf');
+    rfEl.textContent = rf.toFixed(2);
+    rfEl.className = 'metric-val ' + (rf >= 2 ? 'good' : rf >= 1 ? 'warn' : 'bad');
+    document.getElementById('m-rf-badge').innerHTML =
+      rf >= 2 ? badge('good', 'Strong') : rf >= 1 ? badge('warn', 'Recovering') : badge('bad', 'Weak');
+  }
+
+  /* Win/Loss Ratio */
+  if (m.win_loss_ratio != null) {
+    const wl = parseFloat(m.win_loss_ratio);
+    const wlEl = document.getElementById('m-wl');
+    wlEl.textContent = wl.toFixed(2) + 'R';
+    wlEl.className = 'metric-val ' + (wl >= 1.5 ? 'good' : wl >= 1 ? 'warn' : 'bad');
+    document.getElementById('m-wl-badge').innerHTML =
+      wl >= 1.5 ? badge('good', 'Favorable') : wl >= 1 ? badge('warn', 'Balanced') : badge('bad', 'Poor R:R');
+  }
+
+  /* Expectancy */
+  const exp = parseFloat(m.expectancy || 0);
+  const expEl = document.getElementById('m-exp');
+  expEl.textContent = fmt.pnl(exp);
+  expEl.className = 'metric-val ' + (exp > 0 ? 'good' : 'bad');
+  document.getElementById('m-exp-badge').innerHTML =
+    exp > 0 ? badge('good', 'Positive edge') : badge('bad', 'No edge');
+
+  /* Simple values */
+  document.getElementById('m-wr').textContent  = fmt.pct(m.win_rate || 0);
+  document.getElementById('m-mdd').textContent = '-' + (m.max_drawdown_pct || 0).toFixed(2) + '%';
+  document.getElementById('m-tc').textContent  = m.trade_count || 0;
+  document.getElementById('m-aw').textContent  = '+' + fmt.price(m.avg_win);
+  document.getElementById('m-al').textContent  = fmt.pnl(m.avg_loss);
+}
+
+/* ── Strategy bar chart ─────────────────────────────────────────────────── */
+async function loadStrategyChart() {
+  const data = await apiFetch('/dashboard/api/strategy/performance');
+  if (!data || !data.length) return;
+  const labels = data.map(d => d.strategy_id);
+  const values = data.map(d => parseFloat(d.net_pnl));
+  const colors = values.map(v => v >= 0 ? 'rgba(63,182,139,0.8)' : 'rgba(229,72,77,0.8)');
+  destroyChart('strat');
+  charts.strat = new Chart(document.getElementById('strategy-chart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 4, borderSkipped: false }]},
+    options: { ...BASE_OPTS, indexAxis: 'y', scales: {
+      x: { ...BASE_OPTS.scales.x, ticks: { ...TICK, callback: v => fmt.compact(v) } },
+      y: BASE_OPTS.scales.y,
+    }},
+  });
+}
+
+/* ── Symbol heatmap ─────────────────────────────────────────────────────── */
+async function loadHeatmap() {
+  const data = await apiFetch('/dashboard/api/symbol/performance');
+  const wrap = document.getElementById('heatmap-wrap');
+  if (!data || !data.length) {
+    wrap.innerHTML = '<div style="color:var(--fg-4);font-size:11px;font-family:var(--font-mono);padding:8px 0">No symbol data yet</div>';
+    return;
+  }
+  const pnls   = data.map(d => parseFloat(d.net_pnl));
+  const maxAbs = Math.max(...pnls.map(Math.abs)) || 1;
+  wrap.innerHTML = data.map(d => {
+    const pnl = parseFloat(d.net_pnl);
+    const t   = Math.abs(pnl) / maxAbs;
+    const bg  = pnl > 0
+      ? `rgba(63,182,139,${(0.18 + t * 0.52).toFixed(2)})`
+      : pnl < 0
+        ? `rgba(229,72,77,${(0.18 + t * 0.52).toFixed(2)})`
+        : 'rgba(255,255,255,0.06)';
+    return `<div class="hm-cell" style="background:${bg}" title="${d.symbol}: ${fmt.pnl(pnl)}">
+      <div class="hm-sym">${d.symbol}</div>
+      <div class="hm-pnl">${fmt.pnl(pnl)}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ── System health ──────────────────────────────────────────────────────── */
+async function loadHealth() {
+  const t0 = performance.now();
+  const status = await apiFetch('/dashboard/api/status');
+  const apiMs = Math.round(performance.now() - t0);
+  document.getElementById('val-api').textContent = apiMs + ' ms';
+
+  const connected = status && status.connected;
+  const dotIb  = document.getElementById('dot-ib');
+  dotIb.className = 'lat-dot ' + (connected ? 'lat-good' : 'lat-bad');
+  const valIb = document.getElementById('val-ib');
+  valIb.textContent  = connected ? 'Connected' : 'Disconnected';
+  valIb.style.color  = connected ? 'var(--pos)' : 'var(--neg)';
+
+  document.getElementById('val-acct').textContent = status?.account_id || '—';
+  document.getElementById('val-nav').textContent  = status?.nav ? fmt.compact(status.nav) + ' ' + (status.currency || '') : '—';
+
+  if (status?.timestamp) {
+    document.getElementById('health-ts').textContent = status.timestamp.slice(11, 19) + ' UTC';
+  }
+
+  /* DB latency — measure a round-trip */
+  const t1 = performance.now();
+  await fetch('/dashboard/api/summary/today');
+  document.getElementById('val-db').textContent = Math.round(performance.now() - t1) + ' ms';
+
+  /* Daily PnL snapshot */
+  if (status?.nav) {
+    const today = await apiFetch('/dashboard/api/summary/today');
+    if (today) {
+      const pnl = parseFloat(today.net_pnl);
+      const nav = parseFloat(status.nav);
+      const pnlEl = document.getElementById('snap-dpnl');
+      pnlEl.textContent = fmt.pnl(pnl);
+      pnlEl.className   = 'snap-val ' + pnlClass(pnl);
+      const pct = nav > 0 ? (pnl / nav * 100) : 0;
+      document.getElementById('snap-dpnl-sub').textContent = fmt.pct(pct) + ' of NAV';
+    }
+  }
+}
+
+/* ── Active positions ────────────────────────────────────────────────────── */
+async function loadPositions() {
+  const [data, status] = await Promise.all([
+    apiFetch('/dashboard/api/performance/positions'),
+    apiFetch('/dashboard/api/status'),
+  ]);
+  const tbody    = document.getElementById('positions-body');
+  const countEl  = document.getElementById('pos-count');
+  const nav      = status?.nav ? parseFloat(status.nav) : 0;
+
+  countEl.textContent = (data?.length || 0) + ' open';
+
+  if (!data || !data.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No open positions</td></tr>';
+    document.getElementById('snap-exp').textContent = '0%';
+    document.getElementById('exp-market-bar').style.width = '0%';
+    return;
+  }
+
+  let totalCost = 0;
+  tbody.innerHTML = data.map(p => {
+    const cost = parseFloat(p.quantity) * parseFloat(p.entry_price);
+    totalCost += cost;
+    return `<tr>
+      <td style="color:var(--fg-3);font-size:11px">${p.strategy_id}</td>
+      <td>
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          ${tickerGlyph(p.symbol, 18)}
+          <strong style="font-family:var(--font-mono)">${p.symbol}</strong>
+        </span>
+      </td>
+      <td><span class="${p.side === 'buy' ? 'pill-pos' : 'pill-neg'}">${p.side.toUpperCase()}</span></td>
+      <td style="text-align:right;font-family:var(--font-mono)">${fmt.price(p.quantity)}</td>
+      <td style="text-align:right;font-family:var(--font-mono)">${fmt.price(p.entry_price)}</td>
+      <td style="text-align:right;font-family:var(--font-mono);color:var(--fg-3)">${fmt.time(p.entry_at)}</td>
+      <td style="text-align:right;font-family:var(--font-mono);color:var(--fg-3)">${fmt.price(p.commission)}</td>
+      <td style="text-align:right;font-family:var(--font-mono)">${fmt.compact(cost)}</td>
+    </tr>`;
+  }).join('');
+
+  if (nav > 0) {
+    const pct = (totalCost / nav * 100);
+    document.getElementById('snap-exp').textContent = pct.toFixed(1) + '%';
+    document.getElementById('snap-exp').className = 'snap-val';
+    document.getElementById('snap-exp-sub') && (document.getElementById('snap-exp-sub').textContent = (100 - pct).toFixed(1) + '% cash');
+    document.getElementById('exp-market-bar').style.width = Math.min(pct, 100) + '%';
+  }
+}
+
+/* ── Tiny fetch wrapper ──────────────────────────────────────────────────── */
+async function apiFetch(url) {
+  try { return await (await fetch(url)).json(); }
+  catch { return null; }
+}
+
+/* ── Boot ────────────────────────────────────────────────────────────────── */
+async function loadAll() {
+  await Promise.all([
+    loadEquity(),
+    loadSharpe(),
+    loadHistogram(),
+    loadMetrics(),
+    loadStrategyChart(),
+    loadHeatmap(),
+    loadHealth(),
+    loadPositions(),
+  ]);
+}
+
+loadAll();
+setInterval(loadAll, 30_000);
+</script>
+</body>
+</html>
