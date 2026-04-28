@@ -1,42 +1,24 @@
-"""StrategyScheduler — runs registered strategies on a fixed interval."""
-import asyncio
+"""IntradayScheduler — StrategyScheduler filtered to intraday bar sizes."""
 import logging
 from datetime import UTC, datetime
 
-from polara.market_data.service import MarketDataService
-from polara.order_manager.manager import OrderManager
 from polara.research_engine.constants import MAX_BAR_AGE
-from polara.research_engine.registry import StrategyRegistry
+from polara.research_engine.scheduler import StrategyScheduler
 from polara.risk_guard.exceptions import RiskViolationError
 
 logger = logging.getLogger(__name__)
 
+INTRADAY_SIZES: frozenset[str] = frozenset({"15 mins", "30 mins"})
 
-class StrategyScheduler:
-    """Asyncio background task: poll IB → evaluate strategies → submit signals."""
 
-    def __init__(
-        self,
-        market_data_svc: MarketDataService,
-        registry: StrategyRegistry,
-        order_manager: OrderManager,
-        interval_seconds: int = 60,
-    ) -> None:
-        self._market_data = market_data_svc
-        self._registry = registry
-        self._order_manager = order_manager
-        self._interval = interval_seconds
-
-    async def run(self) -> None:
-        """Run forever. Call as asyncio.create_task(scheduler.run())."""
-        while True:
-            await self._run_once()
-            await asyncio.sleep(self._interval)
+class IntradayScheduler(StrategyScheduler):
+    """Evaluates only strategies with bar_size in INTRADAY_SIZES."""
 
     async def _run_once(self) -> None:
-        """One evaluation cycle across all registered strategies."""
         now = datetime.now(UTC)
         for strategy in self._registry.get_all():
+            if strategy.bar_size not in INTRADAY_SIZES:
+                continue
             try:
                 bars = await self._market_data.get_bars(
                     strategy.symbol,
