@@ -527,12 +527,14 @@ class BrokerAdapter:
                     text("UPDATE orders SET status = :status WHERE ib_order_id = :ib_oid"),
                     {"status": our_status, "ib_oid": int(ib_id)},
                 )
-                # Record trade open/close on new fills
+                # Record trade open/close on new fills.
+                # Only add to _known_filled AFTER a successful insert so a
+                # transient DB error (e.g. locked) is retried next poll tick.
                 is_new_fill = our_status == "filled" and int(ib_id) not in self._known_filled
                 if is_new_fill and self._trade_svc:
-                    self._known_filled.add(int(ib_id))
                     try:
                         await self._record_fill(db, o, now)
+                        self._known_filled.add(int(ib_id))
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("trade record failed for ib_id=%s: %s", ib_id, exc)
             await db.commit()

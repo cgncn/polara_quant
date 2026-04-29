@@ -17,10 +17,15 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 @event.listens_for(engine.sync_engine, "connect")
-def _enable_foreign_keys(dbapi_connection: Any, connection_record: Any) -> None:
+def _configure_sqlite(dbapi_connection: Any, connection_record: Any) -> None:
     if "sqlite" in DATABASE_URL:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL mode: readers never block writers, writers never block readers.
+        # Eliminates "database is locked" under concurrent async tasks.
+        cursor.execute("PRAGMA journal_mode=WAL")
+        # Wait up to 5 s for a write lock before raising OperationalError.
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 
