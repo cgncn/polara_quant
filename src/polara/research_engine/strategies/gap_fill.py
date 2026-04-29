@@ -19,6 +19,11 @@ class GapFillStrategy(Strategy):
     bar_size: str
     min_gap_pct: Decimal = Decimal("0.005")
 
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "min_gap_pct": ["0.003", "0.005", "0.007", "0.010"],
+        }
+
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
         return 20

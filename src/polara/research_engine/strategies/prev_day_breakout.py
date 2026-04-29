@@ -21,6 +21,11 @@ class PrevDayBreakoutStrategy(Strategy):
     bar_size: str
     volume_factor: Decimal = Decimal("1.5")
 
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "volume_factor": ["1.2", "1.5", "2.0", "2.5"],
+        }
+
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
         return 40

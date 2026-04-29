@@ -22,6 +22,12 @@ class OpeningRangeBreakoutStrategy(Strategy):
     opening_bars: int = 2
     stop_buffer_pct: Decimal = Decimal("0.001")
 
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "opening_bars":    [1, 2, 3],
+            "stop_buffer_pct": ["0.001", "0.002", "0.003"],
+        }
+
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
         return self.opening_bars + 1

@@ -19,6 +19,7 @@ class CalibrationEngine:
     registry: StrategyRegistry
     store: BarStore
     lookback_bars: int = 200
+    position_size_usd: Decimal | None = None
 
     def _size_multiplier(self, sharpe: Decimal) -> Decimal:
         if sharpe >= Decimal("1.5"):
@@ -31,7 +32,11 @@ class CalibrationEngine:
 
     def _run_backtest(self, strategy: Strategy, symbol: str) -> BacktestResult | None:
         try:
-            backtester = Backtester(strategy=strategy, store=self.store)
+            backtester = Backtester(
+                strategy=strategy,
+                store=self.store,
+                position_size_usd=self.position_size_usd,
+            )
             return backtester.run(
                 symbol=symbol,
                 bar_size=strategy.bar_size,

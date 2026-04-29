@@ -27,6 +27,12 @@ class VWAPMeanReversionStrategy(Strategy):
     deviation_pct: Decimal = Decimal("0.015")
     stop_loss_pct: Decimal = Decimal("0.01")
 
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "deviation_pct": ["0.010", "0.015", "0.020", "0.025"],
+            "stop_loss_pct": ["0.005", "0.010", "0.015"],
+        }
+
     @property
     def bars_needed(self) -> int:
         return 4
