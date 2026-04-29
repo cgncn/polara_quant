@@ -96,6 +96,13 @@ async def active_positions(request: Request):
     return await _svc(request).active_positions()
 
 
+@router.get("/api/strategy/overview")
+async def strategy_overview(request: Request):
+    """All registered strategies with live status, size multiplier, and calibration data."""
+    registry = request.app.state.strategy_registry
+    return await _svc(request).strategy_overview(registry.get_all())
+
+
 # ── HTML page routes ───────────────────────────────────────────────────────────
 
 def _html(path: str) -> HTMLResponse:

@@ -6,6 +6,120 @@
   <title>Polara — Strategies</title>
   <link rel="stylesheet" href="/static/dashboard/base.css">
   <style>
+    /* ── Overview tab ─────────────────────────────────────────────────────── */
+    .ov-header,
+    .ov-row {
+      display: grid;
+      grid-template-columns: 16px 2fr 72px 96px 58px 72px 120px;
+      gap: 12px;
+      align-items: center;
+    }
+    .ov-header {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .ov-row {
+      padding: 13px 20px;
+      border-bottom: 1px solid var(--line-soft);
+      transition: background var(--dur-fast) var(--ease);
+    }
+    .ov-row:last-child { border-bottom: none; }
+    .ov-row:hover { background: rgba(255,255,255,0.02); }
+
+    .group-header {
+      padding: 10px 20px 8px;
+      background: rgba(255,255,255,0.025);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .group-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── Status badges ────────────────────────────────────────────────────── */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 3px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .status-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-paper  { background: rgba(240,198,107,0.15); color: #F0C66B; }
+    .status-live   { background: rgba(63,182,139,0.15);  color: var(--pos); }
+    .status-paused { background: rgba(232,155,127,0.15); color: #E89B7F; }
+    .status-inactive { background: rgba(255,255,255,0.06); color: var(--fg-4); }
+
+    /* ── Bar-size badge ───────────────────────────────────────────────────── */
+    .bar-badge {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.06);
+      color: var(--fg-3);
+      white-space: nowrap;
+    }
+
+    /* ── Action buttons ───────────────────────────────────────────────────── */
+    .action-btns {
+      display: flex;
+      gap: 5px;
+      justify-content: flex-end;
+    }
+    .act-btn {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 3px 9px;
+      height: 22px;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--fg-2);
+      cursor: pointer;
+      transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+      white-space: nowrap;
+    }
+    .act-btn:hover { background: var(--surface-3); color: var(--fg); }
+    .act-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .act-btn.promote { border-color: rgba(63,182,139,0.4); color: var(--pos); }
+    .act-btn.promote:hover { background: rgba(63,182,139,0.12); }
+    .act-btn.demote  { border-color: rgba(232,155,127,0.4); color: #E89B7F; }
+    .act-btn.demote:hover  { background: rgba(232,155,127,0.1); }
+    .act-btn.validate { border-color: rgba(240,198,107,0.4); color: #F0C66B; }
+    .act-btn.validate:hover { background: rgba(240,198,107,0.08); }
+    .act-btn.spinning svg { animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Multiplier chip ──────────────────────────────────────────────────── */
+    .mult-chip {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .mult-2  { color: var(--pos); }
+    .mult-15 { color: #C7E27A; }
+    .mult-1  { color: var(--fg-2); }
+    .mult-05 { color: var(--neg); }
+
+    /* ── Live tab ─────────────────────────────────────────────────────────── */
     .strat-header,
     .strat-row {
       display: grid;
@@ -28,6 +142,7 @@
     .strat-row:last-child { border-bottom: none; }
     .strat-row:hover { background: rgba(255,255,255,0.03); }
 
+    /* ── Backtest tab ─────────────────────────────────────────────────────── */
     .bt-header,
     .bt-row {
       display: grid;
@@ -85,8 +200,8 @@
     .run-btn:hover { background: var(--surface-3); color: var(--fg); }
     .run-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
     .run-btn.spinning svg { animation: spin 0.8s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Shared ───────────────────────────────────────────────────────────── */
     .toast-stack {
       position: fixed; bottom: 24px; right: 24px;
       display: flex; flex-direction: column-reverse; gap: 8px;
@@ -103,11 +218,12 @@
       opacity: 0; transform: translateY(8px);
       transition: opacity 0.18s ease, transform 0.18s ease;
       pointer-events: auto;
-      max-width: 320px;
+      max-width: 340px;
     }
     .toast.show { opacity: 1; transform: none; }
     .toast.toast-ok  { border-left: 3px solid var(--pos); }
     .toast.toast-err { border-left: 3px solid var(--neg); }
+    .toast.toast-warn { border-left: 3px solid #F0C66B; }
 
     .card-hdr {
       display: flex;
@@ -121,6 +237,9 @@
       .strat-header,
       .strat-row { grid-template-columns: 20px 1fr 80px 80px 28px; }
       .col-spark, .col-pf, .col-wr { display: none; }
+      .ov-header,
+      .ov-row { grid-template-columns: 16px 2fr 72px 90px 120px; }
+      .ov-col-mult, .ov-col-sharpe { display: none; }
     }
   </style>
 </head>
@@ -138,23 +257,36 @@
       <div style="display:flex;align-items:center;gap:8px">
         <div class="bt-controls" id="bt-controls" style="display:none">
           <select id="bt-bar-size">
-            <option value="5 mins">5 mins</option>
+            <option value="30 mins">30 mins</option>
             <option value="15 mins">15 mins</option>
+            <option value="5 mins">5 mins</option>
             <option value="1 hour">1 hour</option>
             <option value="1 day">1 day</option>
           </select>
-          <input type="number" id="bt-lookback" value="2000" min="100" max="10000" title="Lookback bars">
+          <input type="number" id="bt-lookback" value="780" min="100" max="10000" title="Lookback bars">
           <button class="btn btn-primary" id="btn-run-all" onclick="runAllBacktests()" style="height:32px;padding:0 14px;font-size:var(--t-small)">Run All</button>
         </div>
         <div class="segmented" id="mode-toggle">
-          <button aria-selected="true" data-mode="live">Live</button>
+          <button aria-selected="true" data-mode="overview">Overview</button>
+          <button data-mode="live">Live P&amp;L</button>
           <button data-mode="backtest">Backtest</button>
         </div>
       </div>
     </div>
 
+    <!-- Overview columns -->
+    <div id="ov-header" class="ov-header">
+      <span></span>
+      <span class="t-micro">Strategy</span>
+      <span class="t-micro">Bar</span>
+      <span class="t-micro">Status</span>
+      <span class="t-micro ov-col-mult" style="text-align:right">Size×</span>
+      <span class="t-micro ov-col-sharpe" style="text-align:right">Sharpe</span>
+      <span class="t-micro" style="text-align:right">Actions</span>
+    </div>
+
     <!-- Live columns -->
-    <div id="live-header" class="strat-header">
+    <div id="live-header" class="strat-header" style="display:none">
       <span></span>
       <span class="t-micro">Strategy</span>
       <span class="t-micro col-spark">Equity curve</span>
@@ -195,7 +327,7 @@ document.getElementById('nav-mount').innerHTML = capsuleNav('Strategies');
 init();
 
 const SERIES_COLORS = ['#EDECE8','#E89B7F','#B59CFF','#C7E27A','#4FE0B6','#6FA8FF','#F0C66B'];
-let currentMode = 'live';
+let currentMode = 'overview';
 let liveTimer = null;
 const runningSet = new Set();
 
@@ -210,7 +342,7 @@ function toast(msg, type = 'ok') {
   setTimeout(() => {
     el.classList.remove('show');
     setTimeout(() => el.remove(), 200);
-  }, 4000);
+  }, 4500);
 }
 
 // ── Mode toggle ────────────────────────────────────────────────────────────────
@@ -220,20 +352,189 @@ document.getElementById('mode-toggle').addEventListener('click', e => {
   document.querySelectorAll('#mode-toggle button').forEach(b => b.removeAttribute('aria-selected'));
   btn.setAttribute('aria-selected', 'true');
   currentMode = btn.dataset.mode;
-  const isLive = currentMode === 'live';
-  document.getElementById('live-header').style.display = isLive ? '' : 'none';
-  document.getElementById('bt-header').style.display   = isLive ? 'none' : '';
-  document.getElementById('bt-controls').style.display = isLive ? 'none' : '';
-  if (isLive) {
+
+  document.getElementById('ov-header').style.display   = currentMode === 'overview'  ? '' : 'none';
+  document.getElementById('live-header').style.display = currentMode === 'live'       ? '' : 'none';
+  document.getElementById('bt-header').style.display   = currentMode === 'backtest'   ? '' : 'none';
+  document.getElementById('bt-controls').style.display = currentMode === 'backtest'   ? '' : 'none';
+
+  clearInterval(liveTimer); liveTimer = null;
+
+  if (currentMode === 'overview') {
+    loadOverview();
+    liveTimer = setInterval(loadOverview, 30_000);
+  } else if (currentMode === 'live') {
     loadStrategies();
-    if (!liveTimer) liveTimer = setInterval(loadStrategies, 30_000);
+    liveTimer = setInterval(loadStrategies, 30_000);
   } else {
-    clearInterval(liveTimer); liveTimer = null;
     loadBacktests();
   }
 });
 
-// ── Live tab ───────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function barLabel(barSize) {
+  const m = { '30 mins': '30m', '15 mins': '15m', '5 mins': '5m',
+               '1 hour': '1h', '1 day': '1d', '1 week': '1w' };
+  return m[barSize] || barSize;
+}
+
+function statusBadge(status) {
+  const cfg = {
+    paper:    { cls: 'status-paper',    dot: '#F0C66B', label: 'PAPER' },
+    live:     { cls: 'status-live',     dot: 'var(--pos)', label: 'LIVE' },
+    paused:   { cls: 'status-paused',   dot: '#E89B7F', label: 'PAUSED' },
+    inactive: { cls: 'status-inactive', dot: 'var(--fg-4)', label: 'INACTIVE' },
+  };
+  const c = cfg[status] || cfg.inactive;
+  return `<span class="status-badge ${c.cls}">
+    <span class="status-dot" style="background:${c.dot}"></span>${c.label}
+  </span>`;
+}
+
+function multChip(mult) {
+  const v = parseFloat(mult);
+  let cls = 'mult-1';
+  if (v >= 2)  cls = 'mult-2';
+  else if (v >= 1.5) cls = 'mult-15';
+  else if (v < 1) cls = 'mult-05';
+  return `<span class="mult-chip ${cls}">${v.toFixed(1)}×</span>`;
+}
+
+function actionBtns(s) {
+  const sid = s.strategy_id;
+  const esc = CSS.escape(sid);
+  if (s.status === 'paper' || s.status === 'paused') {
+    return `<div class="action-btns">
+      <button class="act-btn validate" id="vbtn-${esc}" onclick="validateStrategy('${sid}')">Validate</button>
+      <button class="act-btn promote" id="pbtn-${esc}" onclick="promoteStrategy('${sid}')">Promote</button>
+    </div>`;
+  }
+  if (s.status === 'live') {
+    return `<div class="action-btns">
+      <button class="act-btn demote" id="dbtn-${esc}" onclick="demoteStrategy('${sid}')">Demote</button>
+    </div>`;
+  }
+  return `<div class="action-btns">
+    <button class="act-btn" onclick="validateStrategy('${sid}')">Validate</button>
+  </div>`;
+}
+
+// ── Overview tab ───────────────────────────────────────────────────────────────
+async function loadOverview() {
+  const data = await fetch('/dashboard/api/strategy/overview').then(r => r.json()).catch(() => []);
+  const body = document.getElementById('strat-body');
+  const sub  = document.getElementById('strat-sub');
+
+  const paperCount = data.filter(s => s.status === 'paper').length;
+  const liveCount  = data.filter(s => s.status === 'live').length;
+  sub.textContent = `${data.length} registered · ${liveCount} live · ${paperCount} paper`;
+
+  if (!data.length) {
+    body.innerHTML = `<div style="padding:64px 24px;text-align:center">
+      <div class="t-h3" style="margin-bottom:8px">No strategies registered</div>
+    </div>`;
+    return;
+  }
+
+  const groups = [
+    { type: 'intraday',  label: 'Intraday',  color: '#4FE0B6', items: data.filter(s => s.strategy_type === 'intraday') },
+    { type: 'long-term', label: 'Long-term', color: '#6FA8FF', items: data.filter(s => s.strategy_type === 'long-term') },
+  ];
+
+  let html = '';
+  for (const g of groups) {
+    if (!g.items.length) continue;
+    html += `<div class="group-header">
+      <span class="group-dot" style="background:${g.color}"></span>
+      <span class="t-micro" style="color:var(--fg-2)">${g.label}</span>
+      <span class="t-xs" style="color:var(--fg-4);margin-left:4px">${g.items.length} strategies</span>
+    </div>`;
+    for (const s of g.items) {
+      const sharpe = s.calibration ? parseFloat(s.calibration.rolling_sharpe) : null;
+      const sharpeStr = sharpe != null
+        ? `<span style="color:${sharpe >= 1.5 ? 'var(--pos)' : sharpe >= 0.5 ? '#C7E27A' : 'var(--neg)'}">${sharpe.toFixed(2)}</span>`
+        : '<span style="color:var(--fg-4)">—</span>';
+      html += `<div class="ov-row">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.status === 'live' ? 'var(--pos)' : s.status === 'paper' ? '#F0C66B' : 'var(--fg-4)'};flex-shrink:0"></span>
+        <div style="min-width:0">
+          <div style="font-family:var(--font-mono);font-size:var(--t-small);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.strategy_id}</div>
+          <div class="t-xs" style="color:var(--fg-3);margin-top:1px">${s.symbol}</div>
+        </div>
+        <span class="bar-badge">${barLabel(s.bar_size)}</span>
+        <span>${statusBadge(s.status)}</span>
+        <div class="ov-col-mult" style="text-align:right">${multChip(s.size_multiplier)}</div>
+        <div class="ov-col-sharpe" style="text-align:right;font-family:var(--font-mono);font-size:var(--t-small)">${sharpeStr}</div>
+        ${actionBtns(s)}
+      </div>`;
+    }
+  }
+  body.innerHTML = html;
+}
+
+// ── Promote / Demote / Validate ────────────────────────────────────────────────
+const spinSVG = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2M2.22 2.22l1.41 1.41M8.37 8.37l1.41 1.41M2.22 9.78l1.41-1.41M8.37 3.63l1.41-1.41"/></svg>`;
+
+async function promoteStrategy(sid) {
+  const btn = document.getElementById(`pbtn-${CSS.escape(sid)}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = spinSVG + ' …'; }
+  try {
+    const res = await fetch(`/strategy/${sid}/promote`, { method: 'POST' });
+    if (res.ok) {
+      toast(`${sid} promoted to LIVE`, 'ok');
+      loadOverview();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast(`Promote failed: ${err.detail || res.statusText}`, 'err');
+      if (btn) { btn.disabled = false; btn.textContent = 'Promote'; }
+    }
+  } catch { toast(`${sid}: network error`, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'Promote'; } }
+}
+
+async function demoteStrategy(sid) {
+  const btn = document.getElementById(`dbtn-${CSS.escape(sid)}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = spinSVG + ' …'; }
+  try {
+    const res = await fetch(`/strategy/${sid}/demote`, { method: 'POST' });
+    if (res.ok) {
+      toast(`${sid} demoted to PAPER`, 'warn');
+      loadOverview();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast(`Demote failed: ${err.detail || res.statusText}`, 'err');
+      if (btn) { btn.disabled = false; btn.textContent = 'Demote'; }
+    }
+  } catch { toast(`${sid}: network error`, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'Demote'; } }
+}
+
+async function validateStrategy(sid) {
+  const esc = CSS.escape(sid);
+  const btn = document.getElementById(`vbtn-${esc}`);
+  if (btn) { btn.disabled = true; btn.classList.add('spinning'); btn.innerHTML = spinSVG + ' …'; }
+  const barSize = document.getElementById('bt-bar-size')?.value || '30 mins';
+  const lookback = parseInt(document.getElementById('bt-lookback')?.value || '780', 10);
+  try {
+    const res = await fetch(`/strategy/${sid}/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bar_size: barSize, lookback_bars: lookback }),
+    });
+    if (res.ok) {
+      const r = await res.json();
+      const msg = r.passed
+        ? `${sid}: ✓ Pass — Sharpe ${parseFloat(r.sharpe_ratio).toFixed(2)}, DD ${parseFloat(r.max_drawdown_pct).toFixed(1)}%`
+        : `${sid}: ✗ Fail — Sharpe ${parseFloat(r.sharpe_ratio).toFixed(2)}, DD ${parseFloat(r.max_drawdown_pct).toFixed(1)}%`;
+      toast(msg, r.passed ? 'ok' : 'warn');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast(`Validate failed: ${err.detail || res.statusText}`, 'err');
+    }
+  } catch { toast(`${sid}: network error`, 'err'); }
+  finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('spinning'); btn.textContent = 'Validate'; }
+  }
+}
+
+// ── Live P&L tab ───────────────────────────────────────────────────────────────
 async function loadStrategies() {
   const data = await (await fetch('/dashboard/api/strategy/performance')).json();
   const body = document.getElementById('strat-body');
@@ -244,7 +545,7 @@ async function loadStrategies() {
 
   if (!data.length) {
     body.innerHTML = `<div style="padding:64px 24px;text-align:center">
-      <div class="t-h3" style="margin-bottom:8px">No strategies yet</div>
+      <div class="t-h3" style="margin-bottom:8px">No trade data yet</div>
       <div class="t-small">Strategies appear here once they have closed at least one trade.</div>
     </div>`;
     return;
@@ -257,10 +558,7 @@ async function loadStrategies() {
     const spPts   = genCurve(s.strategy_id.charCodeAt(0) || 7, 60, 100, 0.018, pnl > 0 ? 0.0015 : -0.0008);
     const pf      = s.profit_factor ? parseFloat(s.profit_factor) : null;
     const pfStr   = pf != null ? pf.toFixed(2) : '—';
-    const pfColor = pf == null ? 'var(--fg-4)'
-                  : pf >= 1.5 ? 'var(--pos)'
-                  : pf >= 1.0 ? 'var(--warn)'
-                  :             'var(--neg)';
+    const pfColor = pf == null ? 'var(--fg-4)' : pf >= 1.5 ? 'var(--pos)' : pf >= 1.0 ? 'var(--warn)' : 'var(--neg)';
 
     return `<div class="strat-row">
       <span style="display:inline-block;width:14px;height:2px;background:${color};border-radius:1px;flex-shrink:0"></span>
@@ -284,11 +582,9 @@ async function loadStrategies() {
 function btParams() {
   return {
     bar_size:      document.getElementById('bt-bar-size').value,
-    lookback_bars: parseInt(document.getElementById('bt-lookback').value, 10) || 2000,
+    lookback_bars: parseInt(document.getElementById('bt-lookback').value, 10) || 780,
   };
 }
-
-const spinSVG = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2M2.22 2.22l1.41 1.41M8.37 8.37l1.41 1.41M2.22 9.78l1.41-1.41M8.37 3.63l1.41-1.41"/></svg>`;
 
 async function runBacktest(strategyId) {
   if (runningSet.has(strategyId)) return;
@@ -308,7 +604,7 @@ async function runBacktest(strategyId) {
       toast(`${strategyId}: ${err.detail || res.statusText}`, 'err');
     } else {
       const r = await res.json();
-      toast(`${strategyId}: ${r.passed ? '✓ Pass' : '✗ Fail'} · Sharpe ${parseFloat(r.sharpe_ratio).toFixed(2)}`, r.passed ? 'ok' : 'err');
+      toast(`${strategyId}: ${r.passed ? '✓ Pass' : '✗ Fail'} · Sharpe ${parseFloat(r.sharpe_ratio).toFixed(2)}`, r.passed ? 'ok' : 'warn');
       updateRow(r);
     }
   } catch (e) {
@@ -406,8 +702,9 @@ async function loadBacktests() {
   }).join('');
 }
 
-loadStrategies();
-liveTimer = setInterval(loadStrategies, 30_000);
+// ── Boot ───────────────────────────────────────────────────────────────────────
+loadOverview();
+liveTimer = setInterval(loadOverview, 30_000);
 </script>
 </body>
 </html>

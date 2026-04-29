@@ -341,6 +341,57 @@ class DashboardService:
             """))).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    async def strategy_overview(self, strategies: list) -> list[dict]:
+        """All registered strategies merged with DB status and latest calibration data."""
+        # Status from DB
+        async with self._db() as db:
+            status_rows = (await db.execute(
+                text("SELECT id, status FROM strategies")
+            )).fetchall()
+        status_map: dict[str, str] = {r[0]: r[1] for r in status_rows}
+
+        # Latest calibration result per strategy (if calibration_results table exists)
+        cal_map: dict[str, dict] = {}
+        try:
+            async with self._db() as db:
+                cal_rows = (await db.execute(text("""
+                    SELECT cr.strategy_id, cr.rolling_sharpe, cr.size_multiplier,
+                           cr.calibrated_at, cr.best_params
+                    FROM calibration_results cr
+                    INNER JOIN (
+                        SELECT strategy_id, MAX(calibrated_at) AS max_at
+                        FROM calibration_results
+                        GROUP BY strategy_id
+                    ) latest
+                        ON cr.strategy_id = latest.strategy_id
+                        AND cr.calibrated_at = latest.max_at
+                """))).fetchall()
+            for r in cal_rows:
+                cal_map[r[0]] = {
+                    "rolling_sharpe": str(r[1]),
+                    "size_multiplier": str(r[2]),
+                    "calibrated_at": r[3],
+                    "best_params": r[4],
+                }
+        except Exception:
+            pass  # table not yet created — ignore
+
+        result = []
+        for s in strategies:
+            intraday = s.bar_size in {"15 mins", "30 mins"}
+            result.append({
+                "strategy_id": s.strategy_id,
+                "symbol": s.symbol,
+                "bar_size": s.bar_size,
+                "strategy_type": "intraday" if intraday else "long-term",
+                "status": status_map.get(s.strategy_id, "inactive"),
+                "size_multiplier": str(s.size_multiplier),
+                "calibration": cal_map.get(s.strategy_id),
+            })
+        # Sort: intraday first, then by strategy_id
+        result.sort(key=lambda x: (0 if x["strategy_type"] == "intraday" else 1, x["strategy_id"]))
+        return result
+
 
 def _strategy_row(r: Any) -> dict:
     tc = r.trade_count or 0

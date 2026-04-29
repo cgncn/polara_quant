@@ -17,6 +17,9 @@ from polara.api.routes.strategy import router as strategy_router
 from polara.backtester.service import BacktestService
 from polara.broker.adapter import BrokerAdapter
 from polara.broker.client import IBClient
+from polara.calibration.engine import CalibrationEngine
+from polara.calibration.scheduler import CalibrationScheduler
+from polara.calibration.service import CalibrationService
 from polara.dashboard.dashboard_service import DashboardService
 from polara.dashboard.trade_service import TradeService
 from polara.db.connection import DATABASE_URL, AsyncSessionLocal
@@ -29,10 +32,14 @@ from polara.research_engine.registry import StrategyRegistry
 from polara.research_engine.scheduler import StrategyScheduler
 from polara.research_engine.status_service import StrategyStatusService
 from polara.research_engine.strategies.bollinger_bands import BollingerBandStrategy
+from polara.research_engine.strategies.gap_fill import GapFillStrategy
 from polara.research_engine.strategies.ma_crossover import MACrossoverStrategy
 from polara.research_engine.strategies.macd import MACDStrategy
 from polara.research_engine.strategies.momentum import MomentumStrategy
+from polara.research_engine.strategies.opening_range_breakout import OpeningRangeBreakoutStrategy
+from polara.research_engine.strategies.prev_day_breakout import PrevDayBreakoutStrategy
 from polara.research_engine.strategies.rsi_mean_reversion import RSIMeanReversionStrategy
+from polara.research_engine.strategies.vwap_mean_reversion import VWAPMeanReversionStrategy
 from polara.risk_guard.guard import RiskGuard
 
 logger = logging.getLogger(__name__)
@@ -239,6 +246,42 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
             )
 
+        # ── Intraday strategies (30-min bars, paper by default) ──────────────
+        intraday_bar = os.environ.get("INTRADAY_BAR_SIZE", "30 mins")
+
+        vwap_symbols   = _parse_symbols("VWAP_SYMBOLS",     "MSTR,SMCI")
+        orb_symbols    = _parse_symbols("ORB_SYMBOLS",      "COIN,PLTR,MSTR,RNR")
+        gap_symbols    = _parse_symbols("GAP_FILL_SYMBOLS", "MSTR,COIN,PLTR,RNR")
+        pdhl_symbols   = _parse_symbols("PDHL_SYMBOLS",     "MSTR,COIN,PLTR")
+
+        for symbol in vwap_symbols:
+            registry.register(VWAPMeanReversionStrategy(
+                strategy_id=f"vwap-{symbol.lower()}",
+                symbol=symbol,
+                bar_size=intraday_bar,
+            ))
+
+        for symbol in orb_symbols:
+            registry.register(OpeningRangeBreakoutStrategy(
+                strategy_id=f"orb-{symbol.lower()}",
+                symbol=symbol,
+                bar_size=intraday_bar,
+            ))
+
+        for symbol in gap_symbols:
+            registry.register(GapFillStrategy(
+                strategy_id=f"gap-{symbol.lower()}",
+                symbol=symbol,
+                bar_size=intraday_bar,
+            ))
+
+        for symbol in pdhl_symbols:
+            registry.register(PrevDayBreakoutStrategy(
+                strategy_id=f"pdhl-{symbol.lower()}",
+                symbol=symbol,
+                bar_size=intraday_bar,
+            ))
+
         app.state.strategy_registry = registry
 
         # Seed DB status rows for all registered strategies (paper by default)
@@ -249,6 +292,26 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 status="paper",
             )
 
+        # ── Calibration engine + daily scheduler ─────────────────────────────
+        cal_pos_size_raw = os.environ.get("INTRADAY_POSITION_SIZE_USD", "5000")
+        calibration_svc = CalibrationService(db_session_factory=AsyncSessionLocal)
+        await calibration_svc.migrate()
+        app.state.calibration_svc = calibration_svc
+
+        calibration_engine = CalibrationEngine(
+            registry=registry,
+            store=store,
+            lookback_bars=int(os.environ.get("CALIBRATION_LOOKBACK_BARS", "780")),
+            position_size_usd=Decimal(cal_pos_size_raw),
+        )
+        app.state.calibration_engine = calibration_engine
+
+        calibration_scheduler = CalibrationScheduler(
+            engine=calibration_engine,
+            service=calibration_svc,
+            interval_hours=int(os.environ.get("CALIBRATION_INTERVAL_HOURS", "24")),
+        )
+
         # Background tasks
         scheduler = StrategyScheduler(
             market_data_svc=market_data_svc,
@@ -258,26 +321,32 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         pnl_task = asyncio.create_task(adapter.pnl_snapshot_loop())
         scheduler_task = asyncio.create_task(scheduler.run())
+        calibration_task = asyncio.create_task(calibration_scheduler.run())
         app.state.pnl_task = pnl_task
         app.state.scheduler_task = scheduler_task
+        app.state.calibration_task = calibration_task
 
         logger.info(
-            "Phase 5 trading loop started — strategy scheduler running every %ss",
-            os.environ.get("STRATEGY_INTERVAL_SECONDS", "60"),
+            "Trading loop started — %d strategies registered (%s interval) — "
+            "calibration every %sh",
+            len(registry.get_all()),
+            os.environ.get("STRATEGY_INTERVAL_SECONDS", "60") + "s",
+            os.environ.get("CALIBRATION_INTERVAL_HOURS", "24"),
         )
 
     yield
 
     # Shutdown
-    if hasattr(app.state, "scheduler_task"):
-        app.state.scheduler_task.cancel()
-    if hasattr(app.state, "pnl_task"):
-        app.state.pnl_task.cancel()
+    for attr in ("scheduler_task", "pnl_task", "calibration_task"):
+        if hasattr(app.state, attr):
+            getattr(app.state, attr).cancel()
     tasks_to_gather = []
     if hasattr(app.state, "scheduler_task"):
         tasks_to_gather.append(app.state.scheduler_task)
     if hasattr(app.state, "pnl_task"):
         tasks_to_gather.append(app.state.pnl_task)
+    if hasattr(app.state, "calibration_task"):
+        tasks_to_gather.append(app.state.calibration_task)
     if tasks_to_gather:
         try:
             await asyncio.gather(*tasks_to_gather, return_exceptions=True)

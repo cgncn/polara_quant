@@ -133,10 +133,13 @@ class CalibrationEngine:
             param_sharpe_improvement=improvement,
         )
 
-    async def calibrate_all(self, symbol: str) -> list[CalibrationResult]:
+    async def calibrate_all(self) -> list[CalibrationResult]:
+        """Calibrate every registered strategy using its own symbol."""
         results = []
         for strategy in self.registry.get_all():
-            result = await asyncio.to_thread(self.calibrate_one, strategy.strategy_id, symbol)
+            result = await asyncio.to_thread(
+                self.calibrate_one, strategy.strategy_id, strategy.symbol
+            )
             if result is not None:
                 results.append(result)
         return results

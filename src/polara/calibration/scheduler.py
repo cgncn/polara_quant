@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 class CalibrationScheduler:
     engine: CalibrationEngine
     service: CalibrationService
-    symbol: str
     interval_hours: int = 24
 
     async def run(self) -> None:
@@ -23,9 +22,10 @@ class CalibrationScheduler:
 
     async def _run_once(self) -> None:
         try:
-            results = await self.engine.calibrate_all(self.symbol)
+            results = await self.engine.calibrate_all()
             for result in results:
                 await self.service.save(result)
+            logger.info("Calibration complete — %d strategies updated", len(results))
         except Exception:
             logger.exception("Calibration run failed")
 
