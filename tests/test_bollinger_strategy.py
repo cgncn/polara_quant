@@ -42,7 +42,8 @@ def test_bars_needed_default():
 
 
 def test_bars_needed_custom_period():
-    assert make_strategy(period=10).bars_needed == 11
+    # With atr_period=5 (< period), period dominates: max(11, 7) = 11
+    assert make_strategy(period=10, atr_period=5).bars_needed == 11
 
 
 # ── _bollinger helper ─────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ def test_no_signal_insufficient_bars():
 
 def test_buy_signal_crosses_below_lower_band():
     """Stable prices then a sharp drop pushes last close below the lower band."""
-    strategy = make_strategy(period=5, num_std=Decimal("1"))
+    strategy = make_strategy(period=5, num_std=Decimal("1"), atr_period=5)
     # 6 stable bars at 100, then one very low close
     stable = [Decimal("100")] * 6
     drop = [Decimal("50")]  # way below lower band
@@ -89,7 +90,7 @@ def test_buy_signal_crosses_below_lower_band():
 
 def test_sell_signal_crosses_above_upper_band():
     """Stable prices then a sharp spike pushes last close above the upper band."""
-    strategy = make_strategy(period=5, num_std=Decimal("1"))
+    strategy = make_strategy(period=5, num_std=Decimal("1"), atr_period=5)
     stable = [Decimal("100")] * 6
     spike = [Decimal("200")]  # way above upper band
     bars = make_bars(stable + spike)
@@ -111,7 +112,7 @@ def test_no_signal_inside_bands():
 # ── signal metadata ───────────────────────────────────────────────────────────
 
 def test_signal_utc_timestamp():
-    strategy = make_strategy(period=5, num_std=Decimal("1"))
+    strategy = make_strategy(period=5, num_std=Decimal("1"), atr_period=5)
     bars = make_bars([Decimal("100")] * 6 + [Decimal("50")])
     signal = strategy.on_bars(bars)
     assert signal is not None
@@ -119,8 +120,65 @@ def test_signal_utc_timestamp():
 
 
 def test_stop_loss_propagates():
-    strategy = make_strategy(period=5, num_std=Decimal("1"), stop_loss_pct=Decimal("3"))
+    strategy = make_strategy(period=5, num_std=Decimal("1"), stop_loss_pct=Decimal("3"), atr_period=5)
     bars = make_bars([Decimal("100")] * 6 + [Decimal("50")])
     signal = strategy.on_bars(bars)
     assert signal is not None
     assert signal.stop_loss_pct == Decimal("3")
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+def test_param_grid_present():
+    strategy = make_strategy()
+    assert strategy.PARAM_GRID is not None
+    assert "period" in strategy.PARAM_GRID
+    assert "num_std" in strategy.PARAM_GRID
+
+
+def test_param_grid_types():
+    strategy = make_strategy()
+    for v in strategy.PARAM_GRID["period"]:
+        assert isinstance(v, int)
+    for v in strategy.PARAM_GRID["num_std"]:
+        assert isinstance(v, str)
+
+
+# ── ATR-based adaptive stops ──────────────────────────────────────────────────
+
+def test_atr_stop_overrides_fixed_when_multiplier_set():
+    """When atr_stop_multiplier is set, stop_loss_pct on signal is derived from ATR."""
+    strategy = make_strategy(
+        period=5,
+        num_std=Decimal("1"),
+        stop_loss_pct=Decimal("99"),  # sentinel value — ATR stop should override this
+        atr_period=5,
+        atr_stop_multiplier=Decimal("2"),
+    )
+    bars = make_bars([Decimal("100")] * 6 + [Decimal("50")])
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    # ATR stop should differ from the sentinel fixed stop
+    assert signal.stop_loss_pct != Decimal("99")
+    assert signal.stop_loss_pct is not None
+
+
+def test_fixed_stop_used_when_no_multiplier():
+    """When atr_stop_multiplier is None, fixed stop_loss_pct passes through unchanged."""
+    strategy = make_strategy(
+        period=5,
+        num_std=Decimal("1"),
+        stop_loss_pct=Decimal("3"),
+        atr_period=5,
+        atr_stop_multiplier=None,
+    )
+    bars = make_bars([Decimal("100")] * 6 + [Decimal("50")])
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct == Decimal("3")
+
+
+def test_bars_needed_with_large_atr_period():
+    """When atr_period dominates, bars_needed = atr_period + 2."""
+    strategy = make_strategy(period=5, atr_period=30)
+    assert strategy.bars_needed == 32

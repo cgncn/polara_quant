@@ -1,7 +1,8 @@
 """RSIMeanReversionStrategy — RSI-based mean reversion signal generator.
 
 Uses Wilder's EMA for RSI calculation. All arithmetic in Decimal.
-Buy when RSI < oversold threshold, sell when RSI > overbought threshold.
+Buy when RSI recovers back above the oversold threshold (crossover confirmation).
+Sell when RSI falls back below the overbought threshold (crossover confirmation).
 """
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,17 +23,14 @@ def _compute_rsi(bars: list[Bar], period: int) -> Decimal:
     period_d = Decimal(period)
     closes = [b.close for b in bars]
 
-    # Compute price changes
     deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
 
     gains = [d if d > Decimal(0) else Decimal(0) for d in deltas]
     losses = [abs(d) if d < Decimal(0) else Decimal(0) for d in deltas]
 
-    # Initial average using first `period` deltas
     avg_gain = sum(gains[:period], Decimal(0)) / period_d
     avg_loss = sum(losses[:period], Decimal(0)) / period_d
 
-    # Wilder's EMA for remaining deltas
     for i in range(period, len(deltas)):
         avg_gain = (avg_gain * Decimal(period - 1) + gains[i]) / period_d
         avg_loss = (avg_loss * Decimal(period - 1) + losses[i]) / period_d
@@ -46,7 +44,7 @@ def _compute_rsi(bars: list[Bar], period: int) -> Decimal:
 
 @dataclass
 class RSIMeanReversionStrategy(Strategy):
-    """RSI mean-reversion: buy when oversold, sell when overbought."""
+    """RSI mean-reversion: buy on recovery from oversold, sell on recovery from overbought."""
 
     strategy_id: str
     symbol: str
@@ -58,20 +56,30 @@ class RSIMeanReversionStrategy(Strategy):
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
 
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "period": [9, 14, 21],
+            "oversold": ["25", "30", "35"],
+            "overbought": ["65", "70", "75"],
+        }
+
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
-        return self.period + 1  # need period+1 closes for period deltas
+        # Need two consecutive RSI values: each requires period+1 bars,
+        # so the full window is period+2.
+        return self.period + 2
 
     def on_bars(self, bars: list[Bar]) -> Signal | None:
-        """Return buy signal if RSI < oversold, sell if RSI > overbought, else None."""
+        """Return buy on RSI recovery above oversold, sell on pullback below overbought."""
         if len(bars) < self.bars_needed:
             return None
 
-        rsi = _compute_rsi(bars, self.period)
+        rsi_now = _compute_rsi(bars, self.period)
+        rsi_prev = _compute_rsi(bars[:-1], self.period)
 
-        if rsi < self.oversold:
+        if rsi_prev < self.oversold and rsi_now >= self.oversold:
             strength = Decimal("1")
-        elif rsi > self.overbought:
+        elif rsi_prev > self.overbought and rsi_now <= self.overbought:
             strength = Decimal("-1")
         else:
             return None

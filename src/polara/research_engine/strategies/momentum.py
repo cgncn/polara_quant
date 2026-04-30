@@ -12,6 +12,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from polara.research_engine.base import Strategy
+from polara.research_engine.strategies.indicators import _compute_atr
 from polara.schemas.market import Bar
 from polara.schemas.signals import Signal
 
@@ -38,11 +39,19 @@ class MomentumStrategy(Strategy):
     bar_size: str
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
+    atr_period: int = 14
+    atr_stop_multiplier: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "period": [5, 10, 14, 20],
+            "threshold": ["1.0", "1.5", "2.0", "3.0"],
+            "atr_stop_multiplier": ["1.5", "2.0", "2.5"],
+        }
 
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
-        # Need period + current bar + 1 previous bar for crossover detection
-        return self.period + 2
+        return max(self.period + 2, self.atr_period + 2)
 
     def on_bars(self, bars: list[Bar]) -> Signal | None:
         """Return Signal if ROC crossed the threshold on the last bar, else None."""
@@ -60,6 +69,16 @@ class MomentumStrategy(Strategy):
         else:
             return None
 
+        if self.atr_stop_multiplier is not None:
+            atr = _compute_atr(bars, self.atr_period)
+            close_now = bars[-1].close
+            if atr > Decimal("0") and close_now > Decimal("0"):
+                stop_loss_pct = atr * self.atr_stop_multiplier / close_now
+            else:
+                stop_loss_pct = self.stop_loss_pct
+        else:
+            stop_loss_pct = self.stop_loss_pct
+
         return Signal(
             signal_id=uuid4(),
             strategy_id=self.strategy_id,
@@ -67,6 +86,6 @@ class MomentumStrategy(Strategy):
             strength=strength,
             generated_at=datetime.now(UTC),
             reference_price=bars[-1].close,
-            stop_loss_pct=self.stop_loss_pct,
+            stop_loss_pct=stop_loss_pct,
             take_profit_pct=self.take_profit_pct,
         )

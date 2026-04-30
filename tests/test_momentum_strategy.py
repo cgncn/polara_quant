@@ -42,7 +42,8 @@ def test_bars_needed_default():
 
 
 def test_bars_needed_custom():
-    assert make_strategy(period=5).bars_needed == 5 + 2
+    # With atr_period=5 (< period + 2), period dominates: max(7, 7) = 7
+    assert make_strategy(period=5, atr_period=5).bars_needed == 5 + 2
 
 
 # ── _roc helper ───────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ def test_no_signal_insufficient_bars():
 
 def test_buy_signal_roc_crosses_above_threshold():
     """ROC crosses from below +2% to above +2% → buy signal."""
-    strategy = make_strategy(period=5, threshold=Decimal("2"))
+    strategy = make_strategy(period=5, threshold=Decimal("2"), atr_period=5)
     # 6 bars at 100 (ROC ~0%) then price jumps to 110 (ROC = 10% > 2%)
     # Previous ROC was 0 (≤ 2), current ROC is 10 (> 2) → crossover
     closes = [Decimal("100")] * 7 + [Decimal("110")]
@@ -99,7 +100,7 @@ def test_buy_signal_roc_crosses_above_threshold():
 
 def test_sell_signal_roc_crosses_below_negative_threshold():
     """ROC crosses from above −2% to below −2% → sell signal."""
-    strategy = make_strategy(period=5, threshold=Decimal("2"))
+    strategy = make_strategy(period=5, threshold=Decimal("2"), atr_period=5)
     # 6 bars at 100 (ROC ~0%) then price drops to 90 (ROC = -10% < -2%)
     closes = [Decimal("100")] * 7 + [Decimal("90")]
     bars = make_bars(closes)
@@ -120,7 +121,7 @@ def test_no_signal_flat_roc():
 # ── signal metadata ───────────────────────────────────────────────────────────
 
 def test_signal_utc_timestamp():
-    strategy = make_strategy(period=5, threshold=Decimal("2"))
+    strategy = make_strategy(period=5, threshold=Decimal("2"), atr_period=5)
     bars = make_bars([Decimal("100")] * 7 + [Decimal("110")])
     signal = strategy.on_bars(bars)
     assert signal is not None
@@ -128,8 +129,63 @@ def test_signal_utc_timestamp():
 
 
 def test_take_profit_propagates():
-    strategy = make_strategy(period=5, threshold=Decimal("2"), take_profit_pct=Decimal("6"))
+    strategy = make_strategy(period=5, threshold=Decimal("2"), atr_period=5, take_profit_pct=Decimal("6"))
     bars = make_bars([Decimal("100")] * 7 + [Decimal("110")])
     signal = strategy.on_bars(bars)
     assert signal is not None
     assert signal.take_profit_pct == Decimal("6")
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+def test_param_grid_present():
+    strategy = make_strategy(period=5, threshold=Decimal("2"))
+    assert strategy.PARAM_GRID is not None
+    assert "period" in strategy.PARAM_GRID
+    assert "threshold" in strategy.PARAM_GRID
+
+
+def test_param_grid_types():
+    strategy = make_strategy(period=5, threshold=Decimal("2"))
+    for v in strategy.PARAM_GRID["period"]:
+        assert isinstance(v, int)
+    for v in strategy.PARAM_GRID["threshold"]:
+        assert isinstance(v, str)
+
+
+# ── ATR-based adaptive stops ──────────────────────────────────────────────────
+
+def make_bars_vol(closes: list[Decimal]) -> list[Bar]:
+    return [
+        Bar(
+            symbol="AAPL",
+            timestamp=datetime(2026, 1, 1, 10, i % 60, i // 60, tzinfo=UTC),
+            open=c,
+            high=c + Decimal("2"),
+            low=c - Decimal("2"),
+            close=c,
+            volume=1000,
+        )
+        for i, c in enumerate(closes)
+    ]
+
+
+def test_atr_stop_computed_when_multiplier_set():
+    strategy = make_strategy(
+        period=5,
+        threshold=Decimal("2"),
+        stop_loss_pct=Decimal("99"),
+        atr_period=5,
+        atr_stop_multiplier=Decimal("2"),
+    )
+    closes = [Decimal("100")] * 7 + [Decimal("110")]
+    bars = make_bars_vol(closes)
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct != Decimal("99")
+    assert signal.stop_loss_pct is not None
+
+
+def test_bars_needed_dominated_by_atr_period():
+    strategy = make_strategy(period=5, threshold=Decimal("2"), atr_period=50)
+    assert strategy.bars_needed == 52

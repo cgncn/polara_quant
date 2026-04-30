@@ -133,3 +133,18 @@ def test_stop_loss_propagates():
     signal = strategy.on_bars(bars)
     assert signal is not None
     assert signal.stop_loss_pct == Decimal("4")
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+def test_param_grid_present():
+    strategy = make_strategy()
+    assert strategy.PARAM_GRID is not None
+    assert set(strategy.PARAM_GRID.keys()) == {"fast_period", "slow_period", "signal_period"}
+
+
+def test_param_grid_types():
+    strategy = make_strategy()
+    for key in ("fast_period", "slow_period", "signal_period"):
+        for v in strategy.PARAM_GRID[key]:
+            assert isinstance(v, int), f"{key} grid values must be int, got {type(v)}"

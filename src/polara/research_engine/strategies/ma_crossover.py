@@ -37,6 +37,12 @@ class MACrossoverStrategy(Strategy):
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
 
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "fast_period": [5, 9, 12],
+            "slow_period": [20, 26, 50],
+        }
+
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
         return self.slow_period + 1  # +1 to compute previous-bar MAs

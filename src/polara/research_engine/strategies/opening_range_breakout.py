@@ -1,3 +1,11 @@
+"""OpeningRangeBreakoutStrategy — breakout of the first N bars' high/low.
+
+Improvements:
+  - Volume confirmation: breakout bar volume must exceed opening-range avg × volume_factor
+  - Min range filter: opening range height must be >= min_range_pct of price (avoids choppy opens)
+  - No assert statements — returns None on guard failures
+All arithmetic in Decimal.
+"""
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,11 +29,15 @@ class OpeningRangeBreakoutStrategy(Strategy):
     bar_size: str
     opening_bars: int = 2
     stop_buffer_pct: Decimal = Decimal("0.001")
+    volume_factor: Decimal = Decimal("1.2")
+    min_range_pct: Decimal = Decimal("0.002")
 
     def __post_init__(self) -> None:
         self.PARAM_GRID = {
-            "opening_bars":    [1, 2, 3],
+            "opening_bars": [1, 2, 3],
             "stop_buffer_pct": ["0.001", "0.002", "0.003"],
+            "volume_factor": ["1.0", "1.2", "1.5", "2.0"],
+            "min_range_pct": ["0.001", "0.002", "0.003"],
         }
 
     @property
@@ -53,14 +65,35 @@ class OpeningRangeBreakoutStrategy(Strategy):
         last_bar = session_bars[-1]
         prev_session_bar = session_bars[-2]
 
+        # Min range filter: skip choppy opens where range is too tight
+        if last_bar.close > Decimal("0"):
+            range_height_pct = (range_high - range_low) / last_bar.close
+            if range_height_pct < self.min_range_pct:
+                return None
+
+        # Volume confirmation: last bar volume vs opening range average
+        avg_or_volume = sum(Decimal(b.volume) for b in opening_range_bars) / Decimal(
+            len(opening_range_bars)
+        )
+        if avg_or_volume > Decimal("0"):
+            volume_ok = Decimal(last_bar.volume) >= avg_or_volume * self.volume_factor
+        else:
+            volume_ok = True  # no volume data → allow signal
+
         if last_bar.close > range_high and prev_session_bar.close <= range_high:
+            if not volume_ok:
+                return None
             strength = Decimal("1")
             stop_loss_pct = (last_bar.close - range_low) / last_bar.close + self.stop_buffer_pct
-            assert stop_loss_pct > 0
+            if stop_loss_pct <= Decimal("0"):
+                return None
         elif last_bar.close < range_low and prev_session_bar.close >= range_low:
+            if not volume_ok:
+                return None
             strength = Decimal("-1")
             stop_loss_pct = (range_high - last_bar.close) / last_bar.close + self.stop_buffer_pct
-            assert stop_loss_pct > 0
+            if stop_loss_pct <= Decimal("0"):
+                return None
         else:
             return None
 

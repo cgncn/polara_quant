@@ -1,3 +1,10 @@
+"""GapFillStrategy — fade overnight price gaps.
+
+Improvements:
+  - max_gap_pct: skip gaps larger than this (earnings/news events that won't fill)
+  - Wider PARAM_GRID min_gap_pct range for more signal opportunities
+All arithmetic in Decimal.
+"""
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -18,10 +25,12 @@ class GapFillStrategy(Strategy):
     symbol: str
     bar_size: str
     min_gap_pct: Decimal = Decimal("0.005")
+    max_gap_pct: Decimal | None = None
 
     def __post_init__(self) -> None:
         self.PARAM_GRID = {
-            "min_gap_pct": ["0.003", "0.005", "0.007", "0.010"],
+            "min_gap_pct": ["0.002", "0.003", "0.005", "0.007", "0.010"],
+            "max_gap_pct": ["0.020", "0.030", "0.040"],
         }
 
     @property
@@ -46,15 +55,22 @@ class GapFillStrategy(Strategy):
         today_open = today_bars[0].open
         gap = (today_open - prev_close) / prev_close
 
-        if gap > self.min_gap_pct:
-            strength = Decimal("-1")
-            take_profit_pct = gap - self.min_gap_pct
-        elif gap < -self.min_gap_pct:
-            strength = Decimal("1")
-            take_profit_pct = abs(gap) - self.min_gap_pct
-        else:
+        abs_gap = abs(gap)
+
+        # Skip gaps below minimum threshold
+        if abs_gap <= self.min_gap_pct:
             return None
 
+        # Skip gaps above maximum threshold (earnings-sized — unlikely to fill)
+        if self.max_gap_pct is not None and abs_gap > self.max_gap_pct:
+            return None
+
+        if gap > Decimal("0"):
+            strength = Decimal("-1")
+        else:
+            strength = Decimal("1")
+
+        take_profit_pct = abs_gap - self.min_gap_pct
         stop_loss_pct = self.min_gap_pct
 
         return Signal(

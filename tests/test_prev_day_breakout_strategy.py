@@ -217,3 +217,67 @@ def test_returns_none_when_avg_volume_is_zero():
         today_volume=2000,
     )
     assert strategy.on_bars(bars) is None
+
+
+# ── ATR adaptive stop ─────────────────────────────────────────────────────────
+
+def test_atr_stop_overrides_fixed_stop_when_multiplier_set():
+    """With atr_stop_multiplier set, stop_loss_pct differs from fixed 1%."""
+    strategy = make_strategy(
+        volume_factor=Decimal("1.5"),
+        atr_stop_multiplier=Decimal("2.0"),
+    )
+    bars = _build_bars(
+        prev_high=Decimal("105"),
+        prev_low=Decimal("95"),
+        today_close=Decimal("106"),
+        prev_volume=1000,
+        today_volume=2000,
+    )
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    # ATR-based stop will differ from the fixed 0.01
+    assert signal.stop_loss_pct != Decimal("0.01")
+    assert signal.stop_loss_pct > Decimal("0")
+
+
+def test_fixed_stop_used_when_atr_multiplier_is_none():
+    """Without atr_stop_multiplier, stop_loss_pct is the fixed 1%."""
+    strategy = make_strategy(
+        volume_factor=Decimal("1.5"),
+        atr_stop_multiplier=None,
+    )
+    bars = _build_bars(
+        prev_high=Decimal("105"),
+        prev_low=Decimal("95"),
+        today_close=Decimal("106"),
+        prev_volume=1000,
+        today_volume=2000,
+    )
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct == Decimal("0.01")
+
+
+def test_bars_needed_dominated_by_max_with_large_atr_period():
+    """bars_needed = max(40, atr_period + 2)."""
+    strategy_default = make_strategy()
+    assert strategy_default.bars_needed == 40  # max(40, 14+2) = 40
+
+    strategy_large_atr = make_strategy(atr_period=50)
+    assert strategy_large_atr.bars_needed == 52  # max(40, 50+2) = 52
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+def test_param_grid_present():
+    strategy = make_strategy()
+    assert hasattr(strategy, "PARAM_GRID")
+    assert isinstance(strategy.PARAM_GRID, dict)
+    assert len(strategy.PARAM_GRID) > 0
+
+
+def test_param_grid_contains_atr_and_volume_keys():
+    strategy = make_strategy()
+    assert "volume_factor" in strategy.PARAM_GRID
+    assert "atr_stop_multiplier" in strategy.PARAM_GRID

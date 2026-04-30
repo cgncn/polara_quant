@@ -53,6 +53,8 @@ def _strategy() -> OpeningRangeBreakoutStrategy:
         bar_size="30 mins",
         opening_bars=2,
         stop_buffer_pct=Decimal("0.001"),
+        volume_factor=Decimal("1.0"),  # disable volume filter for existing breakout tests
+        min_range_pct=Decimal("0"),    # disable range filter for existing breakout tests
     )
 
 
@@ -235,3 +237,118 @@ class TestOnlySignalOnCrossover:
         )
         result = s.on_bars([_BAR1, _BAR2, breakout_bar, back_inside])
         assert result is None
+
+
+# ── Volume confirmation filter ────────────────────────────────────────────────
+
+class TestVolumeConfirmation:
+    def test_volume_filter_blocks_breakout_with_low_volume(self) -> None:
+        """Breakout bar volume below OR avg × volume_factor → no signal."""
+        s = OpeningRangeBreakoutStrategy(
+            strategy_id="orb-test",
+            symbol="SPY",
+            bar_size="30 mins",
+            opening_bars=2,
+            stop_buffer_pct=Decimal("0.001"),
+            volume_factor=Decimal("1.5"),
+            min_range_pct=Decimal("0"),
+        )
+        # OR bars: each volume=1000, avg=1000; breakout needs > 1500, but gets 1000
+        breakout_bar = make_bar(
+            "SPY", _dt(15, 30), Decimal("513"), Decimal("516"), Decimal("512"), Decimal("515"),
+            volume=1000,
+        )
+        result = s.on_bars([_BAR1, _BAR2, breakout_bar])
+        assert result is None
+
+    def test_volume_filter_allows_breakout_with_high_volume(self) -> None:
+        """Breakout bar volume above OR avg × volume_factor → signal produced."""
+        s = OpeningRangeBreakoutStrategy(
+            strategy_id="orb-test",
+            symbol="SPY",
+            bar_size="30 mins",
+            opening_bars=2,
+            stop_buffer_pct=Decimal("0.001"),
+            volume_factor=Decimal("1.5"),
+            min_range_pct=Decimal("0"),
+        )
+        # OR bars: each volume=1000, avg=1000; breakout volume=2000 > 1500
+        breakout_bar = make_bar(
+            "SPY", _dt(15, 30), Decimal("513"), Decimal("516"), Decimal("512"), Decimal("515"),
+            volume=2000,
+        )
+        result = s.on_bars([_BAR1, _BAR2, breakout_bar])
+        assert result is not None
+        assert result.strength == Decimal("1")
+
+    def test_volume_factor_one_always_passes(self) -> None:
+        """volume_factor=1.0 means breakout bar must only meet OR avg (>=), so equal volume passes."""
+        s = _strategy()  # volume_factor=1.0, min_range_pct=0
+        breakout_bar = make_bar(
+            "SPY", _dt(15, 30), Decimal("513"), Decimal("516"), Decimal("512"), Decimal("515"),
+            volume=1000,
+        )
+        result = s.on_bars([_BAR1, _BAR2, breakout_bar])
+        assert result is not None
+
+
+# ── Min range filter ──────────────────────────────────────────────────────────
+
+class TestMinRangeFilter:
+    def test_min_range_filter_blocks_tight_opening_range(self) -> None:
+        """Opening range height < min_range_pct of price → no signal."""
+        s = OpeningRangeBreakoutStrategy(
+            strategy_id="orb-test",
+            symbol="SPY",
+            bar_size="30 mins",
+            opening_bars=2,
+            stop_buffer_pct=Decimal("0.001"),
+            volume_factor=Decimal("1.0"),
+            min_range_pct=Decimal("0.01"),  # require 1% range
+        )
+        # _BAR1 high=512, _BAR2 high=513, _BAR1 low=508, _BAR2 low=509
+        # range_high=513, range_low=508, range=5 out of ~515 ≈ 0.97% < 1%
+        breakout_bar = make_bar(
+            "SPY", _dt(15, 30), Decimal("513"), Decimal("516"), Decimal("512"), Decimal("515"),
+            volume=1000,
+        )
+        result = s.on_bars([_BAR1, _BAR2, breakout_bar])
+        assert result is None
+
+    def test_min_range_filter_allows_wide_opening_range(self) -> None:
+        """Opening range height >= min_range_pct → signal allowed."""
+        s = OpeningRangeBreakoutStrategy(
+            strategy_id="orb-test",
+            symbol="SPY",
+            bar_size="30 mins",
+            opening_bars=2,
+            stop_buffer_pct=Decimal("0.001"),
+            volume_factor=Decimal("1.0"),
+            min_range_pct=Decimal("0.005"),  # require 0.5% range
+        )
+        # Wide OR bars: range_high=520, range_low=508 → 12/515 ≈ 2.3% > 0.5%
+        wide_bar1 = make_bar("SPY", _dt(14, 30), Decimal("510"), Decimal("520"), Decimal("508"), Decimal("511"))
+        wide_bar2 = make_bar("SPY", _dt(15, 0), Decimal("511"), Decimal("519"), Decimal("510"), Decimal("512"))
+        breakout_bar = make_bar(
+            "SPY", _dt(15, 30), Decimal("520"), Decimal("525"), Decimal("519"), Decimal("522"),
+            volume=2000,
+        )
+        result = s.on_bars([wide_bar1, wide_bar2, breakout_bar])
+        assert result is not None
+        assert result.strength == Decimal("1")
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+class TestParamGrid:
+    def test_param_grid_present(self) -> None:
+        s = _strategy()
+        assert hasattr(s, "PARAM_GRID")
+        assert isinstance(s.PARAM_GRID, dict)
+        assert len(s.PARAM_GRID) > 0
+
+    def test_param_grid_contains_expected_keys(self) -> None:
+        s = _strategy()
+        assert "volume_factor" in s.PARAM_GRID
+        assert "min_range_pct" in s.PARAM_GRID
+        assert "opening_bars" in s.PARAM_GRID

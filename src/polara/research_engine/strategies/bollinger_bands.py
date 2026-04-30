@@ -15,6 +15,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from polara.research_engine.base import Strategy
+from polara.research_engine.strategies.indicators import _compute_atr
 from polara.schemas.market import Bar
 from polara.schemas.signals import Signal
 
@@ -43,11 +44,19 @@ class BollingerBandStrategy(Strategy):
     bar_size: str
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
+    atr_period: int = 14
+    atr_stop_multiplier: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        self.PARAM_GRID = {
+            "period": [10, 20, 30],
+            "num_std": ["1.5", "2.0", "2.5"],
+            "atr_stop_multiplier": ["1.5", "2.0", "2.5"],
+        }
 
     @property
     def bars_needed(self) -> int:  # type: ignore[override]
-        # +1 for the previous bar to detect a crossover event
-        return self.period + 1
+        return max(self.period + 1, self.atr_period + 2)
 
     def on_bars(self, bars: list[Bar]) -> Signal | None:
         """Return Signal if close crossed a Bollinger Band on the last bar, else None."""
@@ -62,13 +71,20 @@ class BollingerBandStrategy(Strategy):
         close_prev = closes[-2]
 
         if close_prev >= lower_prev and close_now < lower_now:
-            # Crossed below lower band → buy signal
             strength = Decimal("1")
         elif close_prev <= upper_prev and close_now > upper_now:
-            # Crossed above upper band → sell signal
             strength = Decimal("-1")
         else:
             return None
+
+        if self.atr_stop_multiplier is not None:
+            atr = _compute_atr(bars, self.atr_period)
+            if atr > Decimal("0") and close_now > Decimal("0"):
+                stop_loss_pct = atr * self.atr_stop_multiplier / close_now
+            else:
+                stop_loss_pct = self.stop_loss_pct
+        else:
+            stop_loss_pct = self.stop_loss_pct
 
         return Signal(
             signal_id=uuid4(),
@@ -77,6 +93,6 @@ class BollingerBandStrategy(Strategy):
             strength=strength,
             generated_at=datetime.now(UTC),
             reference_price=bars[-1].close,
-            stop_loss_pct=self.stop_loss_pct,
+            stop_loss_pct=stop_loss_pct,
             take_profit_pct=self.take_profit_pct,
         )

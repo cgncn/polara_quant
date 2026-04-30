@@ -1,11 +1,10 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pytest
-
 from polara.research_engine.strategies.vwap_mean_reversion import (
     VWAPMeanReversionStrategy,
     _session_vwap,
+    _session_vwap_std,
 )
 from polara.schemas.market import Bar
 
@@ -219,3 +218,177 @@ def test_signal_uses_full_session_bars_not_just_last():
     signal = strategy.on_bars(bars)
     assert signal is not None
     assert signal.strength == Decimal("1")
+
+
+# ── bars_needed ───────────────────────────────────────────────────────────────
+
+def test_bars_needed_is_3():
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test", symbol="AAPL", bar_size="15 mins"
+    )
+    assert strategy.bars_needed == 3
+
+
+# ── typical price (H+L+C)/3 ──────────────────────────────────────────────────
+
+def test_vwap_uses_typical_price_not_just_close():
+    """VWAP should use (H+L+C)/3, not just the close price."""
+    from datetime import timedelta
+
+    # Bar where H and L differ from C — typical price ≠ close
+    # close=100, high=112, low=100 → typical = (112+100+100)/3 = 104
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=_SESSION_OPEN_UTC,
+        open=Decimal("100"),
+        high=Decimal("112"),
+        low=Decimal("100"),
+        close=Decimal("100"),
+        volume=100,
+    )
+    vwap = _session_vwap([bar])
+    expected = (Decimal("112") + Decimal("100") + Decimal("100")) / Decimal("3")
+    assert vwap == expected
+    assert vwap != Decimal("100")  # would be wrong if using close only
+
+
+def test_vwap_std_nonzero_for_varying_prices():
+    """Volume-weighted std dev is > 0 when bars have different typical prices."""
+    from datetime import timedelta
+
+    bars = [
+        make_bar("AAPL", _SESSION_OPEN_UTC, "100", "100", "100", "100", 100),
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=15), "100", "100", "100", "100", 100),
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=30), "100", "100", "100", "100", 100),
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=45), "90", "90", "90", "90", 100),
+    ]
+    vwap = _session_vwap(bars)
+    std = _session_vwap_std(bars, vwap)
+    assert std > Decimal("0")
+
+
+def test_vwap_std_zero_for_uniform_prices():
+    """Volume-weighted std dev is 0 when all bars have identical typical prices."""
+    bars = _session_bars(["100", "100", "100", "100"])
+    vwap = _session_vwap(bars)
+    std = _session_vwap_std(bars, vwap)
+    assert std == Decimal("0")
+
+
+# ── std_mult band mode ────────────────────────────────────────────────────────
+
+def _make_std_mult_bars() -> list[Bar]:
+    """5 bars at 100, then 1 bar at 85 — price well below lower VWAP band."""
+    from datetime import timedelta
+
+    return [
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=15 * i), "100", "100", "100", "100", 1000)
+        for i in range(5)
+    ] + [
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=75), "85", "85", "85", "85", 1000),
+    ]
+
+
+def test_std_mult_buy_signal_when_below_lower_band():
+    """Price clearly below VWAP - std_mult*std → buy signal."""
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test",
+        symbol="AAPL",
+        bar_size="15 mins",
+        std_mult=Decimal("1.0"),
+    )
+    bars = _make_std_mult_bars()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.strength == Decimal("1")
+
+
+def test_std_mult_sell_signal_when_above_upper_band():
+    """Price clearly above VWAP + std_mult*std → sell signal."""
+    from datetime import timedelta
+
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test",
+        symbol="AAPL",
+        bar_size="15 mins",
+        std_mult=Decimal("1.0"),
+    )
+    bars = [
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=15 * i), "100", "100", "100", "100", 1000)
+        for i in range(5)
+    ] + [
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=75), "115", "115", "115", "115", 1000),
+    ]
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.strength == Decimal("-1")
+
+
+def test_std_mult_no_signal_within_bands():
+    """Price inside VWAP bands → None."""
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test",
+        symbol="AAPL",
+        bar_size="15 mins",
+        std_mult=Decimal("3.0"),  # wide bands
+    )
+    bars = _make_std_mult_bars()
+    # With std_mult=3.0, bands are wider — last close at 85 may be inside
+    # Use a very large multiplier so close=85 is inside VWAP±3σ with these bars
+    # Actually let me use bars closer to VWAP for this test
+    from datetime import timedelta
+    close_bars = [
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=15 * i), "100", "100", "100", "100", 1000)
+        for i in range(5)
+    ] + [
+        # Only 1% away from VWAP ≈ 100, std will be ~few points → std_mult=3.0 band is wide
+        make_bar("AAPL", _SESSION_OPEN_UTC + timedelta(minutes=75), "99", "99", "99", "99", 1000),
+    ]
+    signal = strategy.on_bars(close_bars)
+    assert signal is None
+
+
+def test_std_mult_returns_none_when_std_is_zero():
+    """All prices identical → std=0 → on_bars returns None in std_mult mode."""
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test",
+        symbol="AAPL",
+        bar_size="15 mins",
+        std_mult=Decimal("1.5"),
+    )
+    # All bars identical → std = 0
+    bars = _session_bars(["100", "100", "100", "100"])
+    assert strategy.on_bars(bars) is None
+
+
+def test_std_mult_stop_loss_uses_opposite_band():
+    """In std_mult mode, stop_loss_pct reflects distance to opposite band."""
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test",
+        symbol="AAPL",
+        bar_size="15 mins",
+        std_mult=Decimal("1.0"),
+    )
+    bars = _make_std_mult_bars()
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.stop_loss_pct > Decimal("0")
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+def test_param_grid_present():
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test", symbol="AAPL", bar_size="15 mins"
+    )
+    assert hasattr(strategy, "PARAM_GRID")
+    assert isinstance(strategy.PARAM_GRID, dict)
+    assert len(strategy.PARAM_GRID) > 0
+
+
+def test_param_grid_includes_std_mult():
+    strategy = VWAPMeanReversionStrategy(
+        strategy_id="vwap-test", symbol="AAPL", bar_size="15 mins"
+    )
+    assert "std_mult" in strategy.PARAM_GRID
+    assert "deviation_pct" in strategy.PARAM_GRID

@@ -205,3 +205,61 @@ def test_returns_none_no_previous_session_bars():
     ]
     bars = filler + [today_bar]
     assert strategy.on_bars(bars) is None
+
+
+# ── max_gap_pct filter ────────────────────────────────────────────────────────
+
+def test_max_gap_pct_blocks_oversized_gap_up():
+    """Gap larger than max_gap_pct (earnings-sized) → None."""
+    strategy = make_strategy(min_gap_pct=Decimal("0.005"), max_gap_pct=Decimal("0.02"))
+    # 5% gap-up >> max_gap_pct of 2%
+    prev_close = Decimal("100")
+    today_open = Decimal("105")  # 5% gap
+    bars = _pad_to_20(_build_bars(prev_close, today_open))
+    assert strategy.on_bars(bars) is None
+
+
+def test_max_gap_pct_blocks_oversized_gap_down():
+    """Large gap-down also blocked by max_gap_pct."""
+    strategy = make_strategy(min_gap_pct=Decimal("0.005"), max_gap_pct=Decimal("0.02"))
+    prev_close = Decimal("100")
+    today_open = Decimal("95")  # 5% gap-down
+    bars = _pad_to_20(_build_bars(prev_close, today_open))
+    assert strategy.on_bars(bars) is None
+
+
+def test_max_gap_pct_allows_gap_below_threshold():
+    """Gap within (min_gap_pct, max_gap_pct] → signal produced."""
+    strategy = make_strategy(min_gap_pct=Decimal("0.005"), max_gap_pct=Decimal("0.02"))
+    prev_close = Decimal("100")
+    today_open = Decimal("101")  # 1% gap — inside [0.5%, 2%]
+    bars = _pad_to_20(_build_bars(prev_close, today_open))
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.strength == Decimal("-1")  # gap-up → sell
+
+
+def test_max_gap_pct_none_allows_large_gap():
+    """max_gap_pct=None (default) → no upper limit, large gaps are signalled."""
+    strategy = make_strategy(min_gap_pct=Decimal("0.005"), max_gap_pct=None)
+    prev_close = Decimal("100")
+    today_open = Decimal("110")  # 10% gap
+    bars = _pad_to_20(_build_bars(prev_close, today_open))
+    signal = strategy.on_bars(bars)
+    assert signal is not None
+    assert signal.strength == Decimal("-1")
+
+
+# ── PARAM_GRID ────────────────────────────────────────────────────────────────
+
+def test_param_grid_present():
+    strategy = make_strategy()
+    assert hasattr(strategy, "PARAM_GRID")
+    assert isinstance(strategy.PARAM_GRID, dict)
+    assert len(strategy.PARAM_GRID) > 0
+
+
+def test_param_grid_contains_max_gap_pct():
+    strategy = make_strategy()
+    assert "max_gap_pct" in strategy.PARAM_GRID
+    assert "min_gap_pct" in strategy.PARAM_GRID
