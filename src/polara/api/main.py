@@ -32,6 +32,7 @@ from polara.research_engine.registry import StrategyRegistry
 from polara.research_engine.scheduler import StrategyScheduler
 from polara.research_engine.status_service import StrategyStatusService
 from polara.research_engine.strategies.bollinger_bands import BollingerBandStrategy
+from polara.research_engine.strategies.ema_bounce import EMABounceStrategy
 from polara.research_engine.strategies.gap_fill import GapFillStrategy
 from polara.research_engine.strategies.ma_crossover import MACrossoverStrategy
 from polara.research_engine.strategies.macd import MACDStrategy
@@ -39,6 +40,7 @@ from polara.research_engine.strategies.momentum import MomentumStrategy
 from polara.research_engine.strategies.opening_range_breakout import OpeningRangeBreakoutStrategy
 from polara.research_engine.strategies.prev_day_breakout import PrevDayBreakoutStrategy
 from polara.research_engine.strategies.rsi_mean_reversion import RSIMeanReversionStrategy
+from polara.research_engine.strategies.supertrend import SupertrendStrategy
 from polara.research_engine.strategies.vwap_mean_reversion import VWAPMeanReversionStrategy
 from polara.risk_guard.guard import RiskGuard
 
@@ -278,6 +280,22 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         for symbol in pdhl_symbols:
             registry.register(PrevDayBreakoutStrategy(
                 strategy_id=f"pdhl-{symbol.lower()}",
+                symbol=symbol,
+                bar_size=intraday_bar,
+            ))
+
+        supertrend_symbols = _parse_symbols("SUPERTREND_SYMBOLS", "COIN,PLTR,MSTR,SMCI")
+        for symbol in supertrend_symbols:
+            registry.register(SupertrendStrategy(
+                strategy_id=f"supertrend-{symbol.lower()}",
+                symbol=symbol,
+                bar_size=intraday_bar,
+            ))
+
+        ema_bounce_symbols = _parse_symbols("EMA_BOUNCE_SYMBOLS", "COIN,PLTR,MSTR,RNR")
+        for symbol in ema_bounce_symbols:
+            registry.register(EMABounceStrategy(
+                strategy_id=f"ema-bounce-{symbol.lower()}",
                 symbol=symbol,
                 bar_size=intraday_bar,
             ))
